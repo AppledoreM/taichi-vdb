@@ -18,11 +18,11 @@ class VdbNodeConfig:
             self.slog2z += child_node.slog2z
 
 
+
 @ti.data_oriented
 class VdbInternalNode:
 
-    @staticmethod
-    def append_internal_node(parent_node: ti.template(), node_config: VdbNodeConfig, dtype=ti.f32):
+    def __init__(self, parent_node: ti.template(), node_config: VdbNodeConfig, dtype=ti.f32):
         snode_size = 1 << (node_config.log2x + node_config.log2y + node_config.log2z)
         mask_size = snode_size // 32
         vdb_assert(mask_size * 32 == snode_size, "Snode size is too small for an internal.")
@@ -31,40 +31,46 @@ class VdbInternalNode:
                                                                                         node_config.log2y,
                                                                                         node_config.log2z, snode_size))
 
-        child_node = parent_node.pointer(ti.i, snode_size)
-        value_mask_node = parent_node.dense(ti.i, mask_size)
-        child_mask_node = parent_node.dense(ti.i, mask_size)
-        value_node = parent_node.dense(ti.i, snode_size)
+        self.node_config = node_config
+        self.child_node = parent_node.pointer(ti.i, snode_size)
+        self.value_mask_node = parent_node.dense(ti.i, mask_size)
+        self.child_mask_node = parent_node.dense(ti.i, mask_size)
+        self.value_node = parent_node.dense(ti.i, snode_size)
 
-        value_mask = ti.field(ti.i32)
-        child_mask = ti.field(ti.i32)
-        value = ti.field(dtype)
+        self.value_mask = ti.field(ti.i32)
+        self.child_mask = ti.field(ti.i32)
+        self.value = ti.field(dtype)
 
-        value_mask_node.place(value_mask)
-        child_mask_node.place(child_mask)
-        value_node.place(value)
+        self.value_mask_node.place(self.value_mask)
+        self.child_mask_node.place(self.child_mask)
+        self.value_node.place(self.value)
 
-        return value_mask, child_mask, value, child_node
+    @ti.func
+    def is_child_active(self, index: ti.i32) -> bool:
+        return ti.is_active(self.child_node, index)
+
 
 
 @ti.data_oriented
 class VdbRootNode:
-    root_max_size = 4096
 
-    def __init__(self, dtype=ti.f32, background_value=0.0):
+    def __init__(self, node_config: VdbNodeConfig, dtype=ti.f32, background_value=0.0):
         self.dtype = dtype
         self.background_value = background_value
+        self.root_snode_size = 1 << (node_config.log2x + node_config.log2y + node_config.log2z)
+        self.node_config = node_config
 
         self.root = ti.root
-        self.root_data_child_node = self.root.pointer(ti.i, VdbRootNode.root_max_size)
-        self.root_data_value = ti.field(self.dtype, shape=VdbRootNode.root_max_size)
+        self.child_node = self.root.pointer(ti.i, self.root_snode_size)
+        self.root_data_value = ti.field(self.dtype, shape=self.root_snode_size)
 
         root_mask_size = VdbRootNode.root_max_size // 32
-        self.root_data_state = ti.field(ti.i32, shape=root_mask_size)
+        self.root_data_state = ti.field(ti.i32, shape=self.root_snode_size)
 
-    @ti.func
-    def is_data_at_index_child(self, index: ti.i32) -> bool:
-        return ti.is_active(self.root_data_child_node, index)
+        vdb_log("Vdb Grid Initialized with root node shape ({}, {}, {}) and size: {}".format(node_config.log2x,
+                                                                                                 node_config.log2y,
+                                                                                                 node_config.log2z,
+                                                                                             self.root_snode_size))
 
     @ti.func
     def get_root_state_at(self, index: ti.i32) -> bool:
@@ -103,11 +109,10 @@ class VdbLeafNode:
     def read_leaf_node_flag(leaf_node: ti.template()) -> ti.i64:
         return leaf_node
 
-    @staticmethod
-    def append_leaf_node(parent_node: ti.template(), node_config: VdbNodeConfig, dtype=ti.f32):
-        value = ti.field(dtype)
-        mask = ti.field(ti.i32)
-        flag = ti.field(ti.i64)
+    def __init__(self, parent_node: ti.template(), node_config: VdbNodeConfig, dtype=ti.f32):
+        self.value = ti.field(dtype)
+        self.mask = ti.field(ti.i32)
+        self.flag = ti.field(ti.i64)
 
         snode_size = 1 << (node_config.log2x + node_config.log2y + node_config.log2z)
         mask_size = snode_size // 32
@@ -116,15 +121,15 @@ class VdbLeafNode:
                                                                                         node_config.log2y,
                                                                                         node_config.log2z, snode_size))
 
-        value_node = parent_node.dense(ti.i, snode_size)
-        mask_node = parent_node.dense(ti.i, mask_size)
-        flag_node = parent_node.dense(ti.i, 1)
+        self.node_config = node_config
+        self.value_node = parent_node.dense(ti.i, snode_size)
+        self.mask_node = parent_node.dense(ti.i, mask_size)
+        self.flag_node = parent_node.dense(ti.i, 1)
 
-        mask_node.place(mask)
-        value_node.place(value)
-        flag_node.place(flag)
+        self.mask_node.place(self.mask)
+        self.value_node.place(self.value)
+        self.flag_node.place(self.flag)
 
-        return value, mask, flag
 
 
 @ti.data_oriented
@@ -140,32 +145,55 @@ class VdbGrid:
                 vdb_assert(level_dim > 0, "The vdb level dimension must be greater than 0.")
 
         self.dtype = dtype
-        self.node_config_list = []
+        node_config_list = []
         for i in range(len(tree_levels) - 1, -1, -1):
             if i + 1 == len(tree_levels):
-                self.node_config_list.append(VdbNodeConfig(tree_levels[i], tree_levels[i], tree_levels[i], dtype))
+                node_config_list.append(VdbNodeConfig(tree_levels[i], tree_levels[i], tree_levels[i], dtype))
+
             else:
-                self.node_config_list.append(
-                    VdbNodeConfig(tree_levels[i], tree_levels[i], tree_levels[i], dtype, self.node_config_list[-1]))
+                node_config_list.append(
+                    VdbNodeConfig(tree_levels[i], tree_levels[i], tree_levels[i], dtype, node_config_list[-1]))
 
-        self.node_config_list.reverse()
+        node_config_list.reverse()
+        self.num_tree_level = len(self.node_config_list)
 
-        self.root_node = VdbRootNode(dtype, background_value)
-        self.internal_value_mask_list = []
-        self.internal_child_mask_list = []
-        self.internal_value_list = []
+        self.root_node = VdbRootNode(self.node_config_list[0], dtype, background_value)
+        self.node_list = []
 
         cur_node = self.root_node.root_data_child_node
-        for i in range(len(self.node_config_list)):
+        for i in range(1, len(self.node_config_list)):
             if i + 1 == len(self.node_config_list):
-                value, value_mask, flag = VdbLeafNode.append_leaf_node(cur_node, self.node_config_list[i], dtype)
-                self.leaf_value = value
-                self.leaf_value_mask = value_mask
-                self.leaf_flag = flag
+                self.leaf_node = VdbLeafNode(cur_node, node_config_list[i], dtype)
+                self.node_list.append(self.leaf_node)
             else:
-                value_mask, child_mask, value, cur_node = VdbInternalNode.append_internal_node(cur_node,
-                                                                                               self.node_config_list[i],
-                                                                                               dtype)
-                self.internal_value_mask_list.append(value_mask)
-                self.internal_child_mask_list.append(child_mask)
-                self.internal_value_list.append(value)
+                self.node_list.append(VdbInternalNode(cur_node, self.node_config_list[i], dtype))
+
+    @ti.func
+    def get_value(self, x: int, y: int, z: int):
+        cur_extent = [ 1 << self.root_node.node_config.slog2x, 1 << self.root_node.node_config.slog2y, 1 << self.root_node.node_config.slog2z]
+
+        assert 0 <= x < cur_extent[0], "X needs to be in range of [0, {}) when getting value".format(1 << self.root_node.node_config.slog2x)
+        assert 0 <= y < cur_extent[1], "Y needs to be in range of [0, {}) when getting value".format(1 << self.root_node.node_config.slog2y)
+        assert 0 <= z < cur_extent[2], "Z needs to be in range of [0, {}) when getting value".format(1 << self.root_node.node_config.slog2z)
+
+        res = self.root_node.background_value
+        for i in ti.static(range(self.num_tree_level)):
+            if ti.static(i + 1 < self.num_tree_level):
+                node_config = self.node_list[i].node_config
+                child_node_config = self.node_list[i + 1].node_config
+                internal_offset = ((( x & (1 << node_config.slog2x) - 1) >> child_node_config.slog2x) << (node_config.log2y + node_config.log2z)) + \
+                        ((( y & (1 << node_config.slog2y) - 1) >> child_node_config.slog2y) << node_config.log2z) + \
+                        ((z & (1 << node_config.slog2z) - 1) >> child_node_config.log2z)
+                if ti.static(i == 0):
+                    # Root node
+                    if not self.root_node.is_child_active(internal_offset):
+                        if self.root_node.get_root_state_at(internal_offset):
+                            res = self.root_node.get_root_value_at(internal_offset)
+                        break
+                else:
+                    pass
+            else:
+
+        return res
+
+

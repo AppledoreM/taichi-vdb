@@ -28,26 +28,27 @@ class VdbGridTest(unittest.TestCase):
 
         # Implemented VDB Grid
         self.vdb_grid = VdbGrid(None, self.dtype)
+        self.vdb_grid[1, 2, 3]
 
     @ti.kernel
     def test_root_node(self):
         # 1. We set if root node is initialized correctly
-        for i in range(VdbRootNode.root_max_size):
+        for i in range(self.vdb_grid.root_node.root_snode_size):
             assert self.vdb_grid.root_node.get_root_value_at(i) == self.vdb_grid.root_node.background_value
             assert self.vdb_grid.root_node.get_root_state_at(i) == False
 
         # 2. Test simple get & set functions
         root_node = self.vdb_grid.root_node
-        for i in range(VdbRootNode.root_max_size):
+        for i in range(self.vdb_grid.root_node.root_snode_size):
             root_node.set_root_value_at(i, i)
         # Without setting the active bits, they should all be the background value
-        for i in range(VdbRootNode.root_max_size):
+        for i in range(self.vdb_grid.root_node.root_snode_size):
             assert root_node.get_root_state_at(i) == root_node.background_value
 
-        for i in range(VdbRootNode.root_max_size):
+        for i in range(self.vdb_grid.root_node.root_snode_size):
             if i & 1:
                 root_node.set_root_state_at(i, 1)
-        for i in range(VdbRootNode.root_max_size):
+        for i in range(self.vdb_grid.root_node.root_snode_size):
             if i & 1:
                 assert root_node.get_root_state_at(i) == True
                 assert root_node.get_root_value_at(i) == i
