@@ -5,7 +5,7 @@ import unittest
 import taichi as ti
 from src.vdb_grid import *
 
-ti.init(arch=ti.cuda, device_memory_GB=8, offline_cache=False, debug=True)
+ti.init(arch=ti.cuda, device_memory_GB=4, offline_cache=False, debug=True, kernel_profiler=True)
 
 
 @ti.data_oriented
@@ -29,15 +29,33 @@ class VdbGridTest(unittest.TestCase):
         # Implemented VDB Grid
         self.vdb_grid = VdbGrid(self.sparse_grid_default_levels)
 
+
     @ti.kernel
     def test_basic_read_write(self):
-        for i, j, k in ti.ndrange(100, 100, 100):
+        n = 1000
+        for i, j, k in ti.ndrange(n, n, n):
             self.vdb_grid.set_value(i, j, k, i * j * k)
 
-        for i, j, k in ti.ndrange(100, 100, 100):
+        for i, j, k in ti.ndrange(n, n, n):
             value = self.vdb_grid.get_value(i, j, k)
             assert value == i * j * k, "Value differs at ({}, {}, {}). Expected: {}, But Got: {}".format(i, j, k, i * j * k, value)
 
 
+sparse_grid_default_levels = [2, 2, 2, 2, 2]
+vdb_grid = VdbGrid(sparse_grid_default_levels)
+
+@ti.kernel
+def test_basic_read_write():
+    fill_dim = ti.Vector([1000, 1000, 200])
+    query_dim = ti.Vector([1000, 1000, 1000])
+    for i, j, k in ti.ndrange(fill_dim[0], fill_dim[1], fill_dim[2]):
+        vdb_grid.set_value(i, j, k, i * j * k)
+
+    for i, j, k in ti.ndrange(query_dim[0], query_dim[1], query_dim[2]):
+        value = vdb_grid.get_value(i, j, k)
+        assert value == i * j * k, "Value differs at ({}, {}, {}). Expected: {}, But Got: {}".format(i, j, k, i * j * k, value)
+
 if __name__ == "__main__":
-    unittest.main()
+    # unittest.main()
+    test_basic_read_write()
+    ti.profiler.print_kernel_profiler_info()

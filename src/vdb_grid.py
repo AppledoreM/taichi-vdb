@@ -59,6 +59,7 @@ class VdbRootNode:
         self.child_node = self.root.pointer(ti.i, self.root_snode_size)
 
         self.value = ti.field(self.dtype, shape=self.root_snode_size)
+
         self.value_mask = ti.field(ti.u32, shape=self.root_snode_size // 32)
         self.child_mask = ti.field(ti.u32, shape=self.root_snode_size // 32)
 
@@ -102,11 +103,17 @@ class VdbFieldId:
     child_mask = 1
     value_mask = 2
 @ti.data_oriented
-class VdbFieldWrapper:
+class VdbDataWrapper:
     max_vdb_level = 5
 
-    def __init__(self, value_list, child_mask_list, value_mask_list):
+    def __init__(self, node_list, value_list, child_mask_list, value_mask_list):
         get_field = lambda field_list, index: field_list[index] if len(field_list) > index else None
+        get_node = lambda node_list, index: node_list[index].child_node if len(node_list) > index else None
+
+        self.node0 = get_node(node_list, 0)
+        self.node1 = get_node(node_list, 1)
+        self.node2 = get_node(node_list, 2)
+        self.node3 = get_node(node_list, 3)
 
         self.value0 = get_field(value_list, 0)
         self.value1 = get_field(value_list, 1)
@@ -128,7 +135,7 @@ class VdbFieldWrapper:
 
     @ti.func
     def set_value(self, level, index, value):
-        assert level < VdbFieldWrapper.max_vdb_level, "Level exceeds maximum vdb level {}".format(VdbFieldWrapper.max_vdb_level)
+        assert level < VdbDataWrapper.max_vdb_level, "Level exceeds maximum vdb level {}".format(VdbDataWrapper.max_vdb_level)
         if level == 0:
             self.value0[index] = value
         elif level == 1:
@@ -142,7 +149,7 @@ class VdbFieldWrapper:
 
     @ti.func
     def get_value(self, level, index):
-        assert level < VdbFieldWrapper.max_vdb_level, "Level exceeds maximum vdb level {}".format(VdbFieldWrapper.max_vdb_level)
+        assert level < VdbDataWrapper.max_vdb_level, "Level exceeds maximum vdb level {}".format(VdbDataWrapper.max_vdb_level)
         res = 0.0
         if level == 0:
             res = self.value0[index]
@@ -158,7 +165,7 @@ class VdbFieldWrapper:
 
     @ti.func
     def set_value_mask(self, level, index, value: bool):
-        assert level < VdbFieldWrapper.max_vdb_level, "Level exceeds maximum vdb level {}".format(VdbFieldWrapper.max_vdb_level)
+        assert level < VdbDataWrapper.max_vdb_level, "Level exceeds maximum vdb level {}".format(VdbDataWrapper.max_vdb_level)
         mapped_index = index // 32
         bit_index = ti.u32(index & 31)
         op_byte = ti.u32(1) << bit_index
@@ -188,7 +195,7 @@ class VdbFieldWrapper:
 
     @ti.func
     def get_value_mask(self, level, index) -> bool:
-        assert level < VdbFieldWrapper.max_vdb_level, "Level exceeds maximum vdb level {}".format(VdbFieldWrapper.max_vdb_level)
+        assert level < VdbDataWrapper.max_vdb_level, "Level exceeds maximum vdb level {}".format(VdbDataWrapper.max_vdb_level)
         mapped_index = index // 32
         bit_index = ti.u32(index & 31)
         target_byte = ti.u32(1) << bit_index
@@ -210,7 +217,7 @@ class VdbFieldWrapper:
 
     @ti.func
     def set_child_mask(self, level, index, value: bool):
-        assert level + 1 < VdbFieldWrapper.max_vdb_level, "There is no child mask at leaf level "
+        assert level + 1 < VdbDataWrapper.max_vdb_level, "There is no child mask at leaf level "
         mapped_index = index // 32
         bit_index = ti.u32(index & 31)
         op_byte = ti.u32(1) << bit_index
@@ -236,9 +243,26 @@ class VdbFieldWrapper:
 
 
     @ti.func
+    def is_child_active(self, level, index) -> bool:
+        res = False
+        if level == 0:
+            res = ti.is_active(self.node0, index)
+        elif level == 1:
+            res = ti.is_active(self.node1, index)
+        elif level == 2:
+            res = ti.is_active(self.node2, index)
+        elif level == 3:
+            res = ti.is_active(self.node3, index)
+        else:
+            # assert False
+            pass
+
+        return res
+
+    @ti.func
     def get_child_mask(self, level, index) -> bool:
         assert 0 < level, "There is no child mask at root level"
-        assert level + 1 < VdbFieldWrapper.max_vdb_level, "There is no child mask at leaf level "
+        assert level + 1 < VdbDataWrapper.max_vdb_level, "There is no child mask at leaf level "
         mapped_index = index // 32
         bit_index = ti.u32(index & 31)
         target_byte = ti.u32(1) << bit_index
@@ -297,16 +321,13 @@ class VdbGrid:
         self.sconfig = ti.Vector.field(n=3, dtype=ti.i32, shape=self.num_tree_level)
         for i in range(self.num_tree_level):
             self.config[i] = ti.Vector([self.node_config_list[i].log2x, self.node_config_list[i].log2y, self.node_config_list[i].log2z])
-            if i >= 1:
-                self.sconfig[i - 1] = ti.Vector([self.node_config_list[i].slog2x, self.node_config_list[i].slog2y,
-                                             self.node_config_list[i].slog2z])
+            self.sconfig[i] = ti.Vector([self.node_config_list[i].slog2x, self.node_config_list[i].slog2y, self.node_config_list[i].slog2z])
 
-        self.sconfig[self.num_tree_level - 1] = ti.Vector([0, 0, 0])
-
-        for i in range(self.num_tree_level):
-            config = self.config[i]
-            sconfig = self.sconfig[i]
-            print("config: {}; sconfig: {}".format(config, sconfig))
+        # if __debug__:
+        #     for i in range(self.num_tree_level):
+        #         config = self.config[i]
+        #         sconfig = self.sconfig[i]
+        #         print("config: {}; sconfig: {}".format(config, sconfig))
 
 
         value_list = []
@@ -320,7 +341,7 @@ class VdbGrid:
             if i + 1 < self.num_tree_level:
                 child_mask_list.append(cur_node.child_mask)
 
-        self.field_wrapper = VdbFieldWrapper(value_list, child_mask_list, value_mask_list)
+        self.data_wrapper = VdbDataWrapper(self.node_list, value_list, child_mask_list, value_mask_list)
 
     @ti.func
     def extent_checker(self, x: int, y: int, z: int):
@@ -340,17 +361,19 @@ class VdbGrid:
     @ti.func
     def set_value(self, x: int, y: int, z: int, value):
         self.extent_checker(x, y, z)
-        for i in range(self.num_tree_level):
-            config = self.config[i]
-            sconfig = self.sconfig[i]
+        leaf_level = self.num_tree_level - 1
+        config = self.config[leaf_level]
+        sconfig = self.sconfig[leaf_level]
+        cconfig = sconfig - config
 
-            offset = ((x >> sconfig[0]) << (config[1] + config[2])) + ((y >> sconfig[1]) << config[2]) + (z >> sconfig[2])
+        nx = x >> sconfig[0]
+        ny = y >> sconfig[1]
+        nz = z >> sconfig[2]
+        offset = (((x & (1 << sconfig[0]) - 1) >> cconfig[0]) << (config[1] + config[2])) + (((y & (1 << sconfig[1]) - 1) >> cconfig[1]) << config[2]) + ((z & (1 << sconfig[2]) - 1) >> cconfig[2])
+        offset += (nx * (1 << config[1]) * (1 << config[2]) + ny * (1 << config[2]) + nz) << (config[0] + config[1] + config[2])
 
-            if i + 1 < self.num_tree_level:
-                self.field_wrapper.set_child_mask(i, offset, True)
-            else:
-                self.field_wrapper.set_value(i, offset, value)
-                self.field_wrapper.set_value_mask(i, offset, True)
+        self.data_wrapper.set_value(leaf_level, offset, value)
+        self.data_wrapper.set_value_mask(leaf_level, offset, True)
 
     @ti.func
     def get_value(self, x: int, y: int, z: int):
@@ -365,15 +388,16 @@ class VdbGrid:
 
             config = self.config[i]
             sconfig = self.sconfig[i]
-            offset = ((x >> sconfig[0]) << (config[1] + config[2])) + ((y >> sconfig[1]) << config[2]) + (z >> sconfig[2])
+            cconfig = sconfig - config
 
-            if self.field_wrapper.get_value_mask(i, offset):
-                if i + 1 < self.num_tree_level:
-                    if not found and not self.field_wrapper.get_child_mask(i, offset):
-                        res = self.field_wrapper.get_value(i, offset)
-                        found = True
-                elif not found:
-                    found = True
-                    res = self.field_wrapper.get_value(i, offset)
+            nx = x >> sconfig[0]
+            ny = y >> sconfig[1]
+            nz = z >> sconfig[2]
+            offset = (((x & (1 << sconfig[0]) - 1) >> cconfig[0]) << (config[1] + config[2])) + (((y & (1 << sconfig[1]) - 1) >> cconfig[1]) << config[2]) + ((z & (1 << sconfig[2]) - 1) >> cconfig[2])
+            offset += (nx * (1 << config[1]) * (1 << config[2]) + ny * (1 << config[2]) + nz) << (config[0] + config[1] + config[2])
+
+            if not self.data_wrapper.is_child_active(i, offset):
+                found = True
+                res = self.data_wrapper.get_value(i, offset)
 
         return res
