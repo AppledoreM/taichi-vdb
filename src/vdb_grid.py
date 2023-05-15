@@ -34,16 +34,9 @@ class VdbInternalNode:
         self.snode_size = snode_size
         self.node_config = node_config
         self.child_node = parent_node.pointer(ti.i, snode_size)
-        self.value_mask_node = parent_node.dense(ti.i, mask_size)
-        self.child_mask_node = parent_node.dense(ti.i, mask_size)
         self.value_node = parent_node.dense(ti.i, snode_size)
 
-        self.value_mask = ti.field(ti.u32)
-        self.child_mask = ti.field(ti.u32)
         self.value = ti.field(dtype)
-
-        self.value_mask_node.place(self.value_mask)
-        self.child_mask_node.place(self.child_mask)
         self.value_node.place(self.value)
 
 @ti.data_oriented
@@ -60,9 +53,6 @@ class VdbRootNode:
 
         self.value = ti.field(self.dtype, shape=self.root_snode_size)
 
-        self.value_mask = ti.field(ti.u32, shape=self.root_snode_size // 32)
-        self.child_mask = ti.field(ti.u32, shape=self.root_snode_size // 32)
-
         vdb_log("Vdb Grid Initialized with root node shape ({}, {}, {}) and size: {}".format(node_config.log2x,
                                                                                              node_config.log2y,
                                                                                              node_config.log2z,
@@ -78,8 +68,6 @@ class VdbLeafNode:
 
     def __init__(self, parent_node: ti.template(), node_config: VdbNodeConfig, dtype=ti.f32):
         self.value = ti.field(dtype)
-        self.value_mask = ti.field(ti.u32)
-        self.flag = ti.field(ti.i64)
 
         snode_size = 1 << (node_config.log2x + node_config.log2y + node_config.log2z)
         mask_size = snode_size // 32
@@ -90,23 +78,21 @@ class VdbLeafNode:
 
         self.node_config = node_config
         self.value_node = parent_node.dense(ti.i, snode_size)
-        self.value_mask_node = parent_node.dense(ti.i, mask_size)
-        self.flag_node = parent_node.dense(ti.i, 1)
 
-        self.value_mask_node.place(self.value_mask)
         self.value_node.place(self.value)
-        self.flag_node.place(self.flag)
 
 
 class VdbFieldId:
     value = 0
     child_mask = 1
     value_mask = 2
+
+
 @ti.data_oriented
 class VdbDataWrapper:
     max_vdb_level = 5
 
-    def __init__(self, node_list, value_list, child_mask_list, value_mask_list):
+    def __init__(self, node_list, value_list):
         get_field = lambda field_list, index: field_list[index] if len(field_list) > index else None
         get_node = lambda node_list_, index: node_list_[index].child_node if len(node_list_) > index else None
 
@@ -120,18 +106,6 @@ class VdbDataWrapper:
         self.value2 = get_field(value_list, 2)
         self.value3 = get_field(value_list, 3)
         self.value4 = get_field(value_list, 4)
-
-        self.child_mask0 = get_field(child_mask_list, 0)
-        self.child_mask1 = get_field(child_mask_list, 1)
-        self.child_mask2 = get_field(child_mask_list, 2)
-        self.child_mask3 = get_field(child_mask_list, 3)
-        self.child_mask4 = get_field(child_mask_list, 4)
-
-        self.value_mask0 = get_field(value_mask_list, 0)
-        self.value_mask1 = get_field(value_mask_list, 1)
-        self.value_mask2 = get_field(value_mask_list, 2)
-        self.value_mask3 = get_field(value_mask_list, 3)
-        self.value_mask4 = get_field(value_mask_list, 4)
 
     @ti.func
     def set_value(self, level, index, value):
@@ -164,85 +138,6 @@ class VdbDataWrapper:
         return res
 
     @ti.func
-    def set_value_mask(self, level, index, value: bool):
-        assert level < VdbDataWrapper.max_vdb_level, "Level exceeds maximum vdb level {}".format(VdbDataWrapper.max_vdb_level)
-        mapped_index = index // 32
-        bit_index = ti.u32(index & 31)
-        op_byte = ti.u32(1) << bit_index
-
-        if value:
-            if level == 0:
-                self.value_mask0[mapped_index] |= op_byte
-            if level == 1:
-                self.value_mask1[mapped_index] |= op_byte
-            if level == 2:
-                self.value_mask2[mapped_index] |= op_byte
-            if level == 3:
-                self.value_mask3[mapped_index] |= op_byte
-            if level == 4:
-                self.value_mask4[mapped_index] |= op_byte
-        else:
-            if level == 0:
-                self.value_mask0[mapped_index] &= ~op_byte
-            if level == 1:
-                self.value_mask1[mapped_index] &= ~op_byte
-            if level == 2:
-                self.value_mask2[mapped_index] &= ~op_byte
-            if level == 3:
-                self.value_mask3[mapped_index] &= ~op_byte
-            if level == 4:
-                self.value_mask4[mapped_index] &= ~op_byte
-
-    @ti.func
-    def get_value_mask(self, level, index) -> bool:
-        assert level < VdbDataWrapper.max_vdb_level, "Level exceeds maximum vdb level {}".format(VdbDataWrapper.max_vdb_level)
-        mapped_index = index // 32
-        bit_index = ti.u32(index & 31)
-        target_byte = ti.u32(1) << bit_index
-
-        res = ti.u32(0)
-        if level == 0:
-            res = (self.value_mask0[mapped_index] & target_byte) >> bit_index
-        if level == 1:
-            res = (self.value_mask1[mapped_index] & target_byte) >> bit_index
-        if level == 2:
-            res = (self.value_mask2[mapped_index] & target_byte) >> bit_index
-        if level == 3:
-            res = (self.value_mask3[mapped_index] & target_byte) >> bit_index
-        if level == 4:
-            res = (self.value_mask4[mapped_index] & target_byte) >> bit_index
-
-        return bool(res)
-
-
-    @ti.func
-    def set_child_mask(self, level, index, value: bool):
-        assert level + 1 < VdbDataWrapper.max_vdb_level, "There is no child mask at leaf level "
-        mapped_index = index // 32
-        bit_index = ti.u32(index & 31)
-        op_byte = ti.u32(1) << bit_index
-
-        if value:
-            if level == 0:
-                self.child_mask0[mapped_index] |= op_byte
-            elif level == 1:
-                self.child_mask1[mapped_index] |= op_byte
-            elif level == 2:
-                self.child_mask2[mapped_index] |= op_byte
-            elif level == 3:
-                self.child_mask3[mapped_index] |= op_byte
-        else:
-            if level == 0:
-                self.child_mask0[mapped_index] &= ~op_byte
-            elif level == 1:
-                self.child_mask1[mapped_index] &= ~op_byte
-            elif level == 2:
-                self.child_mask2[mapped_index] &= ~op_byte
-            elif level == 3:
-                self.child_mask3[mapped_index] &= ~op_byte
-
-
-    @ti.func
     def is_child_active(self, level, index) -> bool:
         res = False
         if level == 0:
@@ -256,26 +151,6 @@ class VdbDataWrapper:
 
         return res
 
-    @ti.func
-    def get_child_mask(self, level, index) -> bool:
-        assert 0 < level, "There is no child mask at root level"
-        assert level + 1 < VdbDataWrapper.max_vdb_level, "There is no child mask at leaf level "
-        mapped_index = index // 32
-        bit_index = ti.u32(index & 31)
-        target_byte = ti.u32(1) << bit_index
-
-        res = ti.u32(0)
-
-        if level == 0:
-            res = (self.child_mask1[mapped_index] & target_byte) >> bit_index
-        elif level == 1:
-            res = (self.child_mask1[mapped_index] & target_byte) >> bit_index
-        elif level == 2:
-            res = (self.child_mask2[mapped_index] & target_byte) >> bit_index
-        elif level == 3:
-            res = (self.child_mask3[mapped_index] & target_byte) >> bit_index
-
-        return bool(res)
 
 class VdbGrid:
 
@@ -316,27 +191,29 @@ class VdbGrid:
 
         self.config = ti.Vector.field(n=3, dtype=ti.i32, shape=self.num_tree_level)
         self.sconfig = ti.Vector.field(n=3, dtype=ti.i32, shape=self.num_tree_level)
+        self.cconfig_size = ti.field(dtype=ti.i32, shape=self.num_tree_level)
         self.tpdconfig = ti.Vector.field(n=3, dtype=ti.i32, shape=self.num_tree_level)
 
         for i in range(self.num_tree_level):
             self.config[i] = ti.Vector([self.node_config_list[i].log2x, self.node_config_list[i].log2y, self.node_config_list[i].log2z])
             self.sconfig[i] = ti.Vector([self.node_config_list[i].slog2x, self.node_config_list[i].slog2y, self.node_config_list[i].slog2z])
+            cconfig = self.sconfig[i] - self.config[i]
+            self.cconfig_size[i] = 1 << (cconfig[0] + cconfig[1] + cconfig[2])
             self.tpdconfig[i] = self.config[i]
             if i >= 1:
                 self.tpdconfig[i] += self.tpdconfig[i - 1]
 
+        leaf_config = self.tpdconfig[self.num_tree_level - 1]
+        self.leaf_log2yz = leaf_config[1] + leaf_config[2]
+        self.leaf_log2z = leaf_config[2]
+
         value_list = []
-        child_mask_list = []
-        value_mask_list = []
 
         for i in range(0, self.num_tree_level):
             cur_node = self.node_list[i]
             value_list.append(cur_node.value)
-            value_mask_list.append(cur_node.value_mask)
-            if i + 1 < self.num_tree_level:
-                child_mask_list.append(cur_node.child_mask)
 
-        self.data_wrapper = VdbDataWrapper(self.node_list, value_list, child_mask_list, value_mask_list)
+        self.data_wrapper = VdbDataWrapper(self.node_list, value_list)
 
     @ti.func
     def extent_checker(self, x: int, y: int, z: int):
@@ -356,14 +233,8 @@ class VdbGrid:
 
     @ti.func
     def calc_offset(self, x: int, y: int, z: int, level):
-        leaf_config = self.tpdconfig[self.num_tree_level - 1]
-        voxel_offset = x * (1 << (leaf_config[1] + leaf_config[2])) + y * (1 << leaf_config[2]) + z
-        config = self.config[level]
-        sconfig = self.sconfig[level]
-        cconfig = sconfig - config
-
-        block_size = 1 << (cconfig[0] + cconfig[1] + cconfig[2])
-        return voxel_offset // block_size
+        voxel_offset = (x << self.leaf_log2yz) + (y << self.leaf_log2z) + z
+        return voxel_offset // self.cconfig_size[level]
 
 
     @ti.func
@@ -372,7 +243,6 @@ class VdbGrid:
         offset = self.calc_offset(x, y, z, level)
 
         self.data_wrapper.set_value(level, offset, value)
-        self.data_wrapper.set_value_mask(level, offset, True)
 
     @ti.func
     def get_value(self, x: int, y: int, z: int):

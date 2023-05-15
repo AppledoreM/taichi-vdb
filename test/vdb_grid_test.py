@@ -5,7 +5,7 @@ import unittest
 import taichi as ti
 from src.vdb_grid import *
 
-ti.init(arch=ti.cuda, device_memory_GB=4, offline_cache=False, debug=False, kernel_profiler=True)
+ti.init(arch=ti.cuda, device_memory_GB=4, offline_cache=True, debug=False, kernel_profiler=True)
 
 
 # @ti.data_oriented
@@ -46,11 +46,14 @@ vdb_grid = VdbGrid(sparse_grid_default_levels)
 
 @ti.kernel
 def test_basic_read_write():
-    fill_dim = ti.Vector([1000, 1000, 200])
+    fill_dim = ti.Vector([1000, 1000, 500])
     query_dim = ti.Vector([1000, 1000, 1000])
+
+    ti.loop_config(block_dim=512)
     for i, j, k in ti.ndrange(fill_dim[0], fill_dim[1], fill_dim[2]):
         vdb_grid.set_value(i, j, k, 4, i * j * k)
 
+    ti.loop_config(block_dim=512)
     for i, j, k in ti.ndrange(query_dim[0], query_dim[1], query_dim[2]):
         value = vdb_grid.get_value(i, j, k)
         expected = i * j * k if k < fill_dim[2] else 0
