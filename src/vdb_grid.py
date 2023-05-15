@@ -108,7 +108,7 @@ class VdbDataWrapper:
 
     def __init__(self, node_list, value_list, child_mask_list, value_mask_list):
         get_field = lambda field_list, index: field_list[index] if len(field_list) > index else None
-        get_node = lambda node_list, index: node_list[index].child_node if len(node_list) > index else None
+        get_node = lambda node_list_, index: node_list_[index].child_node if len(node_list_) > index else None
 
         self.node0 = get_node(node_list, 0)
         self.node1 = get_node(node_list, 1)
@@ -253,9 +253,6 @@ class VdbDataWrapper:
             res = ti.is_active(self.node2, index)
         elif level == 3:
             res = ti.is_active(self.node3, index)
-        else:
-            # assert False
-            pass
 
         return res
 
@@ -319,16 +316,14 @@ class VdbGrid:
 
         self.config = ti.Vector.field(n=3, dtype=ti.i32, shape=self.num_tree_level)
         self.sconfig = ti.Vector.field(n=3, dtype=ti.i32, shape=self.num_tree_level)
+        self.tpdconfig = ti.Vector.field(n=3, dtype=ti.i32, shape=self.num_tree_level)
+
         for i in range(self.num_tree_level):
             self.config[i] = ti.Vector([self.node_config_list[i].log2x, self.node_config_list[i].log2y, self.node_config_list[i].log2z])
             self.sconfig[i] = ti.Vector([self.node_config_list[i].slog2x, self.node_config_list[i].slog2y, self.node_config_list[i].slog2z])
-
-        # if __debug__:
-        #     for i in range(self.num_tree_level):
-        #         config = self.config[i]
-        #         sconfig = self.sconfig[i]
-        #         print("config: {}; sconfig: {}".format(config, sconfig))
-
+            self.tpdconfig[i] = self.config[i]
+            if i >= 1:
+                self.tpdconfig[i] += self.tpdconfig[i - 1]
 
         value_list = []
         child_mask_list = []
@@ -358,22 +353,26 @@ class VdbGrid:
         else:
             pass
 
+
     @ti.func
-    def set_value(self, x: int, y: int, z: int, value):
-        self.extent_checker(x, y, z)
-        leaf_level = self.num_tree_level - 1
-        config = self.config[leaf_level]
-        sconfig = self.sconfig[leaf_level]
+    def calc_offset(self, x: int, y: int, z: int, level):
+        leaf_config = self.tpdconfig[self.num_tree_level - 1]
+        voxel_offset = x * (1 << (leaf_config[1] + leaf_config[2])) + y * (1 << leaf_config[2]) + z
+        config = self.config[level]
+        sconfig = self.sconfig[level]
         cconfig = sconfig - config
 
-        nx = x >> sconfig[0]
-        ny = y >> sconfig[1]
-        nz = z >> sconfig[2]
-        offset = (((x & (1 << sconfig[0]) - 1) >> cconfig[0]) << (config[1] + config[2])) + (((y & (1 << sconfig[1]) - 1) >> cconfig[1]) << config[2]) + ((z & (1 << sconfig[2]) - 1) >> cconfig[2])
-        offset += (nx * (1 << config[1]) * (1 << config[2]) + ny * (1 << config[2]) + nz) << (config[0] + config[1] + config[2])
+        block_size = 1 << (cconfig[0] + cconfig[1] + cconfig[2])
+        return voxel_offset // block_size
 
-        self.data_wrapper.set_value(leaf_level, offset, value)
-        self.data_wrapper.set_value_mask(leaf_level, offset, True)
+
+    @ti.func
+    def set_value(self, x: int, y: int, z: int, level, value):
+        self.extent_checker(x, y, z)
+        offset = self.calc_offset(x, y, z, level)
+
+        self.data_wrapper.set_value(level, offset, value)
+        self.data_wrapper.set_value_mask(level, offset, True)
 
     @ti.func
     def get_value(self, x: int, y: int, z: int):
@@ -381,20 +380,12 @@ class VdbGrid:
 
         res = self.root_node.background_value
         found = False
-        # Topdown Record of Node Config
+
         for i in range(self.num_tree_level):
             if found:
                 continue
 
-            config = self.config[i]
-            sconfig = self.sconfig[i]
-            cconfig = sconfig - config
-
-            nx = x >> sconfig[0]
-            ny = y >> sconfig[1]
-            nz = z >> sconfig[2]
-            offset = (((x & (1 << sconfig[0]) - 1) >> cconfig[0]) << (config[1] + config[2])) + (((y & (1 << sconfig[1]) - 1) >> cconfig[1]) << config[2]) + ((z & (1 << sconfig[2]) - 1) >> cconfig[2])
-            offset += (nx * (1 << config[1]) * (1 << config[2]) + ny * (1 << config[2]) + nz) << (config[0] + config[1] + config[2])
+            offset = self.calc_offset(x, y, z, i)
 
             if not self.data_wrapper.is_child_active(i, offset):
                 found = True
