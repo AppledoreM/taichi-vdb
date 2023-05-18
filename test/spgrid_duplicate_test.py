@@ -1,18 +1,29 @@
 import taichi as ti
-ti.init(arch=ti.cuda, device_memory_GB=4, offline_cache=True, debug=False, kernel_profiler=True)
+ti.init(arch=ti.cuda, device_memory_GB=4, offline_cache=False, debug=False, kernel_profiler=True)
 
 sg = ti.field(ti.f32)
-sg0 = ti.root.pointer(ti.ijk, (4, 4, 4))
-sg1 = sg0.pointer(ti.ijk, (4, 4, 4))
-sg2 = sg1.pointer(ti.ijk, (4, 4, 4))
-sg3 = sg2.pointer(ti.ijk, (4, 4, 4))
-sg4 = sg3.dense(ti.ijk, (4, 4, 4))
-sg4.place(sg)
+sg0 = ti.root.pointer(ti.ijk, (16, 16, 16))
+sg1 = sg0.pointer(ti.ijk, (16, 16, 16))
+sg2 = sg1.dense(ti.ijk, (4, 4, 4))
+sg2.place(sg)
 
 @ti.kernel
 def test_sp_read_write():
     fill_dim = ti.Vector([1000, 1000, 500])
     query_dim = ti.Vector([1000, 1000, 1000])
+    ti.loop_config(block_dim=512)
+    for i, j, k in ti.ndrange(fill_dim[0], fill_dim[1], fill_dim[2]):
+        sg[i, j, k] = i * j * k
+
+
+    ti.loop_config(block_dim=512)
+    for i, j, k in ti.ndrange(fill_dim[0], fill_dim[1], fill_dim[2]):
+        sg[i, j, k] = i * j * k
+
+    ti.loop_config(block_dim=512)
+    for i, j, k in ti.ndrange(fill_dim[0], fill_dim[1], fill_dim[2]):
+        sg[i, j, k] = i * j * k
+
     ti.loop_config(block_dim=512)
     for i, j, k in ti.ndrange(fill_dim[0], fill_dim[1], fill_dim[2]):
         sg[i, j, k] = i * j * k

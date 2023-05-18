@@ -12,253 +12,262 @@ class VdbNodeConfig:
         self.slog2x = log2x
         self.slog2y = log2y
         self.slog2z = log2z
-        if child_node is not None:
+
+        if ti.static(child_node is not None):
             self.slog2x += child_node.slog2x
             self.slog2y += child_node.slog2y
             self.slog2z += child_node.slog2z
 
-
-@ti.data_oriented
-class VdbInternalNode:
-
-    def __init__(self, parent_node: ti.template(), node_config: VdbNodeConfig, dtype=ti.f32):
-        snode_size = 1 << (node_config.log2x + node_config.log2y + node_config.log2z)
-        mask_size = snode_size // 32
-        vdb_assert(mask_size * 32 == snode_size, "Snode size is too small for an internal.")
-
-        vdb_log("Vdb Grid Initialized with internal node shape ({}, {}, {}) and size: {}".format(node_config.log2x,
-                                                                                                 node_config.log2y,
-                                                                                                 node_config.log2z,
-                                                                                                 snode_size))
-
-        self.snode_size = snode_size
-        self.node_config = node_config
-        self.child_node = parent_node.pointer(ti.i, snode_size)
-        self.value_node = parent_node.dense(ti.i, snode_size)
-
-        self.value = ti.field(dtype)
-        self.value_node.place(self.value)
-
-@ti.data_oriented
-class VdbRootNode:
-
-    def __init__(self, node_config: VdbNodeConfig, dtype=ti.f32, background_value=0.0):
-        self.dtype = dtype
-        self.background_value = background_value
-        self.root_snode_size = 1 << (node_config.log2x + node_config.log2y + node_config.log2z)
-        self.node_config = node_config
-
-        self.root = ti.root
-        self.child_node = self.root.pointer(ti.i, self.root_snode_size)
-
-        self.value = ti.field(self.dtype, shape=self.root_snode_size)
-
-        vdb_log("Vdb Grid Initialized with root node shape ({}, {}, {}) and size: {}".format(node_config.log2x,
-                                                                                             node_config.log2y,
-                                                                                             node_config.log2z,
-                                                                                             self.root_snode_size))
-
-
-@ti.data_oriented
-class VdbLeafNode:
-
-    @staticmethod
-    def read_leaf_node_flag(leaf_node: ti.template()) -> ti.i64:
-        return leaf_node
-
-    def __init__(self, parent_node: ti.template(), node_config: VdbNodeConfig, dtype=ti.f32):
-        self.value = ti.field(dtype)
-
-        snode_size = 1 << (node_config.log2x + node_config.log2y + node_config.log2z)
-        mask_size = snode_size // 32
-        vdb_assert(mask_size * 32 == snode_size, "The size of the leaf nodes needs to be greater than 32.")
-        vdb_log("Vdb Grid Initialized with leaf shape ({}, {}, {}) and size: {}".format(node_config.log2x,
-                                                                                        node_config.log2y,
-                                                                                        node_config.log2z, snode_size))
-
-        self.node_config = node_config
-        self.value_node = parent_node.dense(ti.i, snode_size)
-
-        self.value_node.place(self.value)
-
-
-class VdbFieldId:
-    value = 0
-    child_mask = 1
-    value_mask = 2
+class VdbOpId:
+    set_op = 0
+    add_op = 1
+    sub_op = 2
+    mul_op = 3
+    div_op = 4
 
 
 @ti.data_oriented
 class VdbDataWrapper:
-    max_vdb_level = 5
+    max_vdb_levels = 5
 
-    def __init__(self, node_list, value_list):
-        get_field = lambda field_list, index: field_list[index] if len(field_list) > index else None
-        get_node = lambda node_list_, index: node_list_[index].child_node if len(node_list_) > index else None
+    def __init__(self, num_vdb_levels, config):
+        self.pointer_list = [ ti.root ]
+        self.bitmasked_list = []
+        self.value_list = []
 
-        self.node0 = get_node(node_list, 0)
-        self.node1 = get_node(node_list, 1)
-        self.node2 = get_node(node_list, 2)
-        self.node3 = get_node(node_list, 3)
+        self.num_vdb_levels = ti.static(num_vdb_levels)
 
-        self.value0 = get_field(value_list, 0)
-        self.value1 = get_field(value_list, 1)
-        self.value2 = get_field(value_list, 2)
-        self.value3 = get_field(value_list, 3)
-        self.value4 = get_field(value_list, 4)
+        # Compile time determinantion of fields
+        if ti.static(self.num_vdb_levels > 0):
+            self.value0 = ti.field(ti.f32)
+            self.value_list.append(self.value0)
+            self.leaf_value = self.value0
+        if ti.static(self.num_vdb_levels > 1):
+            self.value1 = ti.field(ti.f32)
+            self.value_list.append(self.value1)
+            self.leaf_value = self.value1
+        if ti.static(self.num_vdb_levels > 2):
+            self.value2 = ti.field(ti.f32)
+            self.value_list.append(self.value2)
+            self.leaf_value = self.value2
+        if ti.static(self.num_vdb_levels > 3):
+            self.value3 = ti.field(ti.f32)
+            self.value_list.append(self.value3)
+            self.leaf_value = self.value3
+        if ti.static(self.num_vdb_levels > 4):
+            self.value4 = ti.field(ti.f32)
+            self.value_list.append(self.value4)
+            self.leaf_value = self.value4
+
+
+        for i in ti.static(range(self.num_vdb_levels)):
+            self.bitmasked_list.append(self.pointer_list[-1].dense(ti.ijk, 1 << config[i]))
+            self.bitmasked_list[-1].place(self.value_list[i])
+            if i + 1 < self.num_vdb_levels:
+                self.pointer_list.append(self.pointer_list[-1].pointer(ti.ijk, 1 << config[i]))
+
+        if ti.static(self.num_vdb_levels > 1):
+            self.child0 = self.pointer_list[1]
+        if ti.static(self.num_vdb_levels > 2):
+            self.child1 = self.pointer_list[2]
+        if ti.static(self.num_vdb_levels > 3):
+            self.child2 = self.pointer_list[3]
+        if ti.static(self.num_vdb_levels > 4):
+            self.child3 = self.pointer_list[4]
+
+    
+    @ti.func
+    def set_op(self, i, j, k, value, f: ti.template()):
+        f[i, j, k] = value
 
     @ti.func
-    def set_value(self, level, index, value):
-        assert level < VdbDataWrapper.max_vdb_level, "Level exceeds maximum vdb level {}".format(VdbDataWrapper.max_vdb_level)
-        if level == 0:
-            self.value0[index] = value
-        elif level == 1:
-            self.value1[index] = value
-        elif level == 2:
-            self.value2[index] = value
-        elif level == 3:
-            self.value3[index] = value
-        elif level == 4:
-            self.value4[index] = value
+    def add_op(self, i, j, k, value, f: ti.template()):
+        f[i, j, k] += value
 
     @ti.func
-    def get_value(self, level, index):
-        assert level < VdbDataWrapper.max_vdb_level, "Level exceeds maximum vdb level {}".format(VdbDataWrapper.max_vdb_level)
+    def sub_op(self, i, j, k, value, f: ti.template()):
+        f[i, j, k] -= value
+
+    @ti.func
+    def mul_op(self, i, j, k, value, f: ti.template()):
+        f[i, j, k] *= value
+
+    @ti.func
+    def div_op(self, i, j, k, value, f: ti.template()):
+        f[i, j, k] /= value
+
+
+    @ti.func
+    def apply_op(self, i, j, k, value, op: ti.template(), f: ti.template(), fixed_level: ti.template(), level: ti.template()):
+        if ti.static(level == fixed_level):
+            op(i, j, k, value, f)
+
+
+    @ti.func
+    def modify_value(self, level: ti.template(), i, j, k, value: ti.template(), op: ti.template()):
+        assert level >= 0, "Level needs to be non-negative."
+        assert level < self.num_vdb_levels, "Level exceeds maximum vdb level {}".format(self.num_vdb_levels)
+
+        if ti.static(self.num_vdb_levels > 0):
+            self.apply_op(i, j, k, value, op, self.value0, 0, level)
+        if ti.static(self.num_vdb_levels > 1):
+            self.apply_op(i, j, k, value, op, self.value1, 1, level)
+        if ti.static(self.num_vdb_levels > 2):
+            self.apply_op(i, j, k, value, op, self.value2, 2, level)
+        if ti.static(self.num_vdb_levels > 3):
+            self.apply_op(i, j, k, value, op, self.value3, 3, level)
+        if ti.static(self.num_vdb_levels > 4):
+            self.apply_op(i, j, k, value, op, self.value4, 4, level)
+
+
+    @ti.func
+    def set_value(self, level: ti.template(), i, j, k, value):
+        self.modify_value(level, i, j, k, value, self.set_op)
+
+
+    @ti.func
+    def read_value(self, level: ti.template(), i, j, k):
+        assert level < self.num_vdb_levels, "Level exceeds maximum vdb level {}".format(self.num_vdb_levels)
+        
         res = 0.0
-        if level == 0:
-            res = self.value0[index]
-        elif level == 1:
-            res = self.value1[index]
-        elif level == 2:
-            res = self.value2[index]
-        elif level == 3:
-            res = self.value3[index]
-        elif level == 4:
-            res = self.value4[index]
-        return res
+        if ti.static(level + 1 == self.num_vdb_levels):
+            res = self.leaf_value[i, j, k]
+        else:
+            i, j, k = self.rescale_index_from_world_voxel(level, i, j, k)
+            if ti.static(level == 0 and self.num_vdb_levels > 0):
+                res = self.value0[i, j, k]
+            elif ti.static(level == 1 and self.num_vdb_levels > 1):
+                res = self.value1[i, j, k]
+            elif ti.static(level == 2 and self.num_vdb_levels > 2):
+                res = self.value2[i, j, k]
+            elif ti.static(level == 3 and self.num_vdb_levels > 3):
+                res = self.value3[i, j, k]
+            elif ti.static(level == 4 and self.num_vdb_levels > 4):
+                res = self.value4[i, j, k]
 
+        return res
+    
+
+
+    #@param: level   - denotes the target child snode to scale to
+    #        i, j, k - denotes the coordinates of world voxel to rescale
     @ti.func
-    def is_child_active(self, level, index) -> bool:
+    def rescale_index_from_world_voxel(self, level: ti.template(), i, j, k):
+        assert level + 1 < self.num_vdb_levels, "Should never rescale index at or beyond the leaf level"
+        index = ti.Vector.zero(ti.i32, n=3)
+
+        if ti.static(level == 0 and self.num_vdb_levels > 1):
+            index = ti.rescale_index(self.leaf_value, self.child0, ti.Vector([i, j, k]))
+        elif ti.static(level == 1 and self.num_vdb_levels > 2):
+            index = ti.rescale_index(self.leaf_value, self.child1, ti.Vector([i, j, k]))
+        elif ti.static(level == 2 and self.num_vdb_levels > 3):
+            index = ti.rescale_index(self.leaf_value, self.child2, ti.Vector([i, j, k]))
+        elif ti.static(level == 3 and self.num_vdb_levels > 4):
+            index = ti.rescale_index(self.leaf_value, self.child3, ti.Vector([i, j, k]))
+
+        return index
+
+
+
+
+    #@param: level   - denotes the level of sparse grid to check 
+    #        i, j, k - denotes the coordinate of world voxel 
+    #@detail: Return if a child is active
+    @ti.func
+    def is_child_active(self, level: ti.template(), i, j, k) -> bool:
+        i, j, k = self.rescale_index_from_world_voxel(level, i, j, k)
         res = False
-        if level == 0:
-            res = ti.is_active(self.node0, index)
-        elif level == 1:
-            res = ti.is_active(self.node1, index)
-        elif level == 2:
-            res = ti.is_active(self.node2, index)
-        elif level == 3:
-            res = ti.is_active(self.node3, index)
+
+        if ti.static(level == 0 and self.num_vdb_levels > 0):
+            res = ti.is_active(self.child0, [i, j, k])
+        elif ti.static(level == 1 and self.num_vdb_levels > 1):
+            res = ti.is_active(self.child1, [i, j, k])
+        elif ti.static(level == 2 and self.num_vdb_levels > 2):
+            res = ti.is_active(self.child2, [i, j, k])
+        elif ti.static(level == 3 and self.num_vdb_levels > 3):
+            res = ti.is_active(self.child3, [i, j, k])
 
         return res
 
 
 class VdbGrid:
 
-    def __init__(self, tree_levels=None, dtype=ti.f32, background_value=0.0):
+    def __init__(self, level_configs=None, dtype=ti.f32, background_value=0.0, origin = ti.Vector([0.0, 0.0, 0.0])):
 
-        if tree_levels is None:
-            tree_levels = [5, 5, 5, 5, 3]
+        if level_configs is None:
+            level_configs = [5, 5, 5, 5, 3]
         else:
-            vdb_assert(isinstance(tree_levels, type([])), "Tree levels should be an array type.")
-            for level_dim in tree_levels:
+            vdb_assert(isinstance(level_configs, type([])), "Tree levels should be an array type.")
+            for level_dim in level_configs:
                 vdb_assert(level_dim > 0, "The vdb level dimension must be greater than 0.")
 
         self.dtype = dtype
-        self.num_tree_level = len(tree_levels)
+        self.num_vdb_levels = ti.static(len(level_configs))
+        self.leaf_level = self.num_vdb_levels - 1
+        self.origin = origin
 
-        self.node_config_list = []
-        for i in range(self.num_tree_level - 1, -1, -1):
-            if i + 1 == self.num_tree_level:
-                self.node_config_list.append(VdbNodeConfig(tree_levels[i], tree_levels[i], tree_levels[i], dtype))
+        # Build configuration of each level
+        config_list = []
+        for i in range(self.num_vdb_levels - 1, -1, -1):
+            if i + 1 == self.num_vdb_levels:
+                config_list.append(VdbNodeConfig(level_configs[i], level_configs[i], level_configs[i], dtype))
 
             else:
-                self.node_config_list.append(
-                    VdbNodeConfig(tree_levels[i], tree_levels[i], tree_levels[i], dtype, self.node_config_list[-1]))
+                config_list.append(VdbNodeConfig(level_configs[i], level_configs[i], level_configs[i], dtype, config_list[-1]))
 
-        self.node_config_list.reverse()
+        config_list.reverse()
 
-        self.root_node = VdbRootNode(self.node_config_list[0], dtype, background_value)
-        self.node_list = [self.root_node]
+        # Store configurations in fields
+        self.config = ti.Vector.field(n=3, dtype=ti.i32, shape=self.num_vdb_levels + 1)
+        self.sconfig = ti.Vector.field(n=3, dtype=ti.i32, shape=self.num_vdb_levels + 1)
+        self.ssize = ti.field(ti.f32, shape=self.num_vdb_levels + 1)
 
-        cur_node = self.root_node.child_node
-        for i in range(1, len(self.node_config_list)):
-            if i + 1 == len(self.node_config_list):
-                self.leaf_node = VdbLeafNode(cur_node, self.node_config_list[i], dtype)
-                self.node_list.append(self.leaf_node)
-            else:
-                self.node_list.append(VdbInternalNode(cur_node, self.node_config_list[i], dtype))
-                cur_node = self.node_list[-1].child_node
 
-        self.config = ti.Vector.field(n=3, dtype=ti.i32, shape=self.num_tree_level)
-        self.sconfig = ti.Vector.field(n=3, dtype=ti.i32, shape=self.num_tree_level)
-        self.cconfig_size = ti.field(dtype=ti.i32, shape=self.num_tree_level)
-        self.tpdconfig = ti.Vector.field(n=3, dtype=ti.i32, shape=self.num_tree_level)
+        for i in range(self.num_vdb_levels):
+            self.config[i] = ti.Vector([config_list[i].log2x, config_list[i].log2y, config_list[i].log2z])
+            self.sconfig[i] = ti.Vector([config_list[i].slog2x, config_list[i].slog2y, config_list[i].slog2z])
+            sconfig = self.sconfig[i]
+            self.ssize[i] = 1 << (sconfig[0] + sconfig[1] + sconfig[2])
 
-        for i in range(self.num_tree_level):
-            self.config[i] = ti.Vector([self.node_config_list[i].log2x, self.node_config_list[i].log2y, self.node_config_list[i].log2z])
-            self.sconfig[i] = ti.Vector([self.node_config_list[i].slog2x, self.node_config_list[i].slog2y, self.node_config_list[i].slog2z])
-            cconfig = self.sconfig[i] - self.config[i]
-            self.cconfig_size[i] = 1 << (cconfig[0] + cconfig[1] + cconfig[2])
-            self.tpdconfig[i] = self.config[i]
-            if i >= 1:
-                self.tpdconfig[i] += self.tpdconfig[i - 1]
+        self.data_wrapper = VdbDataWrapper(self.num_vdb_levels, self.config)
 
-        leaf_config = self.tpdconfig[self.num_tree_level - 1]
-        self.leaf_log2yz = leaf_config[1] + leaf_config[2]
-        self.leaf_log2z = leaf_config[2]
+    
 
-        value_list = []
-
-        for i in range(0, self.num_tree_level):
-            cur_node = self.node_list[i]
-            value_list.append(cur_node.value)
-
-        self.data_wrapper = VdbDataWrapper(self.node_list, value_list)
-
+    #@param: i, j, k denotes the coordinates in the voxel space
+    #        value denotes the target value to set
+    #@detail: change the value of voxel to specificed
     @ti.func
-    def extent_checker(self, x: int, y: int, z: int):
-        if __debug__:
-            cur_extent = [1 << self.root_node.node_config.slog2x, 1 << self.root_node.node_config.slog2y,
-                          1 << self.root_node.node_config.slog2z]
-
-            assert 0 <= x < cur_extent[0], "X needs to be in range of [0, {}) when getting value".format(
-                1 << self.root_node.node_config.slog2x)
-            assert 0 <= y < cur_extent[1], "Y needs to be in range of [0, {}) when getting value".format(
-                1 << self.root_node.node_config.slog2y)
-            assert 0 <= z < cur_extent[2], "Z needs to be in range of [0, {}) when getting value".format(
-                1 << self.root_node.node_config.slog2z)
+    def modify_value(self, i, j, k, value, op: ti.template()): 
+        if ti.static(op == VdbOpId.set_op):
+            self.data_wrapper.set_value(self.leaf_level, i, j, k, value)
         else:
+            print("Unrecognized operation to modify vdb value")
             pass
 
-
     @ti.func
-    def calc_offset(self, x: int, y: int, z: int, level):
-        voxel_offset = (x << self.leaf_log2yz) + (y << self.leaf_log2z) + z
-        return voxel_offset // self.cconfig_size[level]
+    def set_value(self, i, j, k, value):
+        self.modify_value(i, j, k, value, VdbOpId.set_op)
 
 
     @ti.func
-    def set_value(self, x: int, y: int, z: int, level, value):
-        self.extent_checker(x, y, z)
-        offset = self.calc_offset(x, y, z, level)
-
-        self.data_wrapper.set_value(level, offset, value)
-
-    @ti.func
-    def get_value(self, x: int, y: int, z: int):
-        self.extent_checker(x, y, z)
-
-        res = self.root_node.background_value
-        found = False
-
-        for i in range(self.num_tree_level):
-            if found:
-                continue
-
-            offset = self.calc_offset(x, y, z, i)
-
-            if not self.data_wrapper.is_child_active(i, offset):
-                found = True
-                res = self.data_wrapper.get_value(i, offset)
+    def read_value_impl(self, level: ti.template(), i, j, k):
+        res = 0.0
+        if ti.static(level + 1 == self.num_vdb_levels):
+            res = self.data_wrapper.read_value(self.leaf_level, i, j, k)
+        else:
+            if not self.data_wrapper.is_child_active(level, i, j, k):
+                res = self.data_wrapper.read_value(level, i, j, k) 
+            else:
+                res = self.read_value_impl(level + 1, i, j, k)
 
         return res
+
+
+    @ti.func
+    def read_value(self, i, j, k):
+        return self.read_value_impl(self.leaf_level, i, j, k)
+
+
+            
+        
+
