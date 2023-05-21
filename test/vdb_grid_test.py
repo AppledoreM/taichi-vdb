@@ -1,11 +1,9 @@
 import os.path
 import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/src")
-import unittest
-import taichi as ti
 from src.vdb_grid import *
 
-ti.init(arch=ti.cuda, device_memory_GB=4, offline_cache=True, debug=False, kernel_profiler=True)
+ti.init(arch=ti.cuda, device_memory_GB=8, offline_cache=False, debug=False, kernel_profiler=True)
 
 
 
@@ -41,6 +39,9 @@ def test_basic_read():
         value = vdb_grid.read_value(i, j, k)
         expected = i * j * k if k < fill_dim[2] else 0
         assert value == expected, "Value differs at ({}, {}, {}). Expected: {}, But Got: {}".format(i, j, k, i * j * k, value)
+
+
+
 
 
 

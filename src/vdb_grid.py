@@ -1,10 +1,12 @@
+## @package VdbGrid
+# Documentations for an implementation of multi-resolution sparse structure with snode
 import taichi as ti
 from src.utils import *
 
-
-class VdbNodeConfig:
+## Represents the configuration of three dimensions a level in a vdb grid
+class VdbLevelConfig:
     def __init__(self, log2x: int, log2y: int, log2z: int, dtype=ti.f32, child_node=None):
-        vdb_assert(log2x > 0 and log2y > 0 and log2z > 0, "VdbNodeConfig needs all log2x, log2y, log2z to be positive.")
+        vdb_assert(log2x > 0 and log2y > 0 and log2z > 0, "VdbLevelConfig needs all log2x, log2y, log2z to be positive.")
         self.dtype = dtype
         self.log2x = log2x
         self.log2y = log2y
@@ -18,6 +20,7 @@ class VdbNodeConfig:
             self.slog2y += child_node.slog2y
             self.slog2z += child_node.slog2z
 
+## Represents the operation id that is supported in a vdb grid
 class VdbOpId:
     set_op = 0
     add_op = 1
@@ -26,86 +29,121 @@ class VdbOpId:
     div_op = 4
 
 
+## Internal implementation of the vdb grid 
 @ti.data_oriented
 class VdbDataWrapper:
+    ## Maximum levels of vdb grid supported
     max_vdb_levels = 5
 
-    def __init__(self, num_vdb_levels, config: ti.template(), sconfig: ti.template(), voxel_dim):
-        self.pointer_list = [ ti.root ]
-        self.bitmasked_list = []
-        self.value_list = []
+    ## @param num_vdb_levels a positive integer that represents the number of levels of vdb grid to construct
+    #                        it needs to be less than VdbDataWrapper.max_vdb_levels
+    #  @param config a taichi vector fields of size num_vdb_levels + 1 that denotes configuration of each level of the vdb grid
+    #  @param sconfig a taichi vector fields of size num_vdb_levels + 1 that denotes bottom up configuration of each level of the vdb grid
+    #  @param voxel_dim a taichi vector that denotes the dimensions of the smallest voxel
+    def __init__(self, num_vdb_levels, config: ti.template(), sconfig: ti.template(), voxel_dim, background_value):
+        # Temporary lists for ease of construction
+        pointer_list = [ ti.root ]
+        bitmasked_list = []
+        value_list = []
+
         self.voxel_dim = voxel_dim
         self.config = config
         self.sconfig = sconfig
-
         self.num_vdb_levels = ti.static(num_vdb_levels)
+        self.background_value = background_value
 
         # Compile time determinantion of fields
         if ti.static(self.num_vdb_levels > 0):
             self.value0 = ti.field(ti.f32)
-            self.value_list.append(self.value0)
+            value_list.append(self.value0)
             self.leaf_value = self.value0
         if ti.static(self.num_vdb_levels > 1):
             self.value1 = ti.field(ti.f32)
-            self.value_list.append(self.value1)
+            value_list.append(self.value1)
             self.leaf_value = self.value1
         if ti.static(self.num_vdb_levels > 2):
             self.value2 = ti.field(ti.f32)
-            self.value_list.append(self.value2)
+            value_list.append(self.value2)
             self.leaf_value = self.value2
         if ti.static(self.num_vdb_levels > 3):
             self.value3 = ti.field(ti.f32)
-            self.value_list.append(self.value3)
+            value_list.append(self.value3)
             self.leaf_value = self.value3
         if ti.static(self.num_vdb_levels > 4):
             self.value4 = ti.field(ti.f32)
-            self.value_list.append(self.value4)
+            value_list.append(self.value4)
             self.leaf_value = self.value4
 
 
         for i in ti.static(range(self.num_vdb_levels)):
-            self.bitmasked_list.append(self.pointer_list[-1].bitmasked(ti.ijk, 1 << config[i]))
-            self.bitmasked_list[-1].place(self.value_list[i])
+            bitmasked_list.append(pointer_list[-1].bitmasked(ti.ijk, 1 << config[i]))
+            bitmasked_list[-1].place(value_list[i])
             if i + 1 < self.num_vdb_levels:
-                self.pointer_list.append(self.pointer_list[-1].pointer(ti.ijk, 1 << config[i]))
+                pointer_list.append(pointer_list[-1].pointer(ti.ijk, 1 << config[i]))
 
         if ti.static(self.num_vdb_levels > 1):
-            self.child0 = self.pointer_list[1]
+            self.child0 = pointer_list[1]
         if ti.static(self.num_vdb_levels > 2):
-            self.child1 = self.pointer_list[2]
+            self.child1 = pointer_list[2]
         if ti.static(self.num_vdb_levels > 3):
-            self.child2 = self.pointer_list[3]
+            self.child2 = pointer_list[3]
         if ti.static(self.num_vdb_levels > 4):
-            self.child3 = self.pointer_list[4]
+            self.child3 = pointer_list[4]
 
     
+    ## @param i, j, k The coordinates for the set operation
+    #  @param value The value for the set operation
+    #  @param f The field for the set operation
     @ti.func
     def set_op(self, i, j, k, value, f: ti.template()):
         f[i, j, k] = value
 
+    ## @param i, j, k The coordinates for the add operation
+    #  @param value The value for the add operation
+    #  @param f The field for the add operation
     @ti.func
     def add_op(self, i, j, k, value, f: ti.template()):
         f[i, j, k] += value
 
+    ## @param i, j, k The coordinates for the sub operation
+    #  @param value The value for the sub operation
+    #  @param f The field for the sub operation
     @ti.func
     def sub_op(self, i, j, k, value, f: ti.template()):
         f[i, j, k] -= value
 
+    ## @param i, j, k The coordinates for the mul operation
+    #  @param value The value for the mul operation
+    #  @param f The field for the mul operation
     @ti.func
     def mul_op(self, i, j, k, value, f: ti.template()):
         f[i, j, k] *= value
 
+    ## @param i, j, k The coordinates for the div operation
+    #  @param value The value for the div operation
+    #  @param f The field for the div operation
     @ti.func
     def div_op(self, i, j, k, value, f: ti.template()):
         f[i, j, k] /= value
 
 
+    ## @param i, j, k The coordinates for operation to apply
+    #  @param value The value for the operation to apply
+    #  @param f The field for the operation to apply
+    #  @param op The operation function
+    #  @param fixed_level The compile-time fixed level that correponds to the field \a f 
+    #  @param level The compile-time level that indicates level to apply the operation
     @ti.func
     def apply_op(self, i, j, k, value, op: ti.template(), f: ti.template(), fixed_level: ti.template(), level: ti.template()):
         if ti.static(level == fixed_level):
             op(i, j, k, value, f)
 
 
+    ## @param level The compile-time level to apply specific operation \a op
+    #  @param i, j, k The local voxel coordinates to apply operation 
+    #  @param value The value to apply operations
+    #  
+    #  @brief Implementation of modifying a value at (i, j, k) with given operations with multi-level grids
     @ti.func
     def modify_value(self, level: ti.template(), i, j, k, value: ti.template(), op: ti.template()):
         assert level >= 0, "Level needs to be non-negative."
@@ -123,31 +161,49 @@ class VdbDataWrapper:
             self.apply_op(i, j, k, value, op, self.value4, 4, level)
 
 
+    ## @param level The compile-time level to set 
+    #  @param i, j, k The local voxel coordinates for the set operation
+    #  @param value The value for the set operation
     @ti.func
-    def set_value(self, level: ti.template(), i, j, k, value):
+    def set_value_local(self, level: ti.template(), i, j, k, value):
         self.modify_value(level, i, j, k, value, self.set_op)
 
+    ## @param level The compile-time level to add 
+    #  @param i, j, k The local voxel coordinates for the add operation
+    #  @param value The value for the add operation
     @ti.func
-    def add_value(self, level: ti.template(), i, j, k, value):
+    def add_value_local(self, level: ti.template(), i, j, k, value):
         self.modify_value(level, i, j, k, value, self.add_op)
 
+    ## @param level The compile-time level to subtract 
+    #  @param i, j, k The local voxel coordinates for the sub operation
+    #  @param value The value for the sub operation
     @ti.func
-    def sub_value(self, level: ti.template(), i, j, k, value):
+    def sub_value_local(self, level: ti.template(), i, j, k, value):
         self.modify_value(level, i, j, k, value, self.sub_op)
 
+    ## @param level The compile-time level to multiply 
+    #  @param i, j, k The local voxel coordinates for the mul operation
+    #  @param value The value for the mul operation
     @ti.func
-    def mul_value(self, level: ti.template(), i, j, k, value):
+    def mul_value_local(self, level: ti.template(), i, j, k, value):
         self.modify_value(level, i, j, k, value, self.mul_op)
 
+    ## @param level The compile-time level to divide 
+    #  @param i, j, k The local voxel coordinates for the div operation
+    #  @param value The value for the div operation
     @ti.func
-    def div_value(self, level: ti.template(), i, j, k, value):
+    def div_value_local(self, level: ti.template(), i, j, k, value):
         self.modify_value(level, i, j, k, value, self.div_op)
 
+    ## @param level The compile-time level to read value from  
+    #  @param i, j, k The local voxel coordinates to read value from
+    #  @return The value read from \a level at (i, j, k)
     @ti.func
     def read_value_local(self, level: ti.template(), i, j, k):
         assert level < self.num_vdb_levels, "Level exceeds maximum vdb level {}".format(self.num_vdb_levels)
 
-        res = 0.0
+        res = self.background_value
         if ti.static(level + 1 == self.num_vdb_levels):
             res = self.leaf_value[i, j, k]
         else:
@@ -164,6 +220,9 @@ class VdbDataWrapper:
 
         return res
 
+    ## @param level The compile-time level to read value from  
+    #  @param i, j, k The world voxel coordinates to read value from
+    #  @return The value read from \a level at (i, j, k)
     @ti.func
     def read_value_world(self, level: ti.template(), i, j, k):
         assert level < self.num_vdb_levels, "Level exceeds maximum vdb level {}".format(self.num_vdb_levels)
@@ -173,23 +232,14 @@ class VdbDataWrapper:
             res = self.leaf_value[i, j, k]
         else:
             i, j, k = self.rescale_index_from_world_voxel(level, i, j, k)
-            if ti.static(level == 0 and self.num_vdb_levels > 0):
-                res = self.value0[i, j, k]
-            elif ti.static(level == 1 and self.num_vdb_levels > 1):
-                res = self.value1[i, j, k]
-            elif ti.static(level == 2 and self.num_vdb_levels > 2):
-                res = self.value2[i, j, k]
-            elif ti.static(level == 3 and self.num_vdb_levels > 3):
-                res = self.value3[i, j, k]
-            elif ti.static(level == 4 and self.num_vdb_levels > 4):
-                res = self.value4[i, j, k]
+            res = self.read_value_local(level, i, j, k)
 
         return res
     
 
 
-    #@param: level   - denotes the target child snode to scale to
-    #        i, j, k - denotes the coordinates of world voxel to rescale
+    ## @param level   The target child snode to scale to
+    #  @param i, j, k The coordinates of world voxel to rescale
     @ti.func
     def rescale_index_from_world_voxel(self, level: ti.template(), i, j, k):
         assert level + 1 <= self.num_vdb_levels, "Should never rescale index beyond the leaf level"
@@ -211,14 +261,11 @@ class VdbDataWrapper:
         return index
 
 
-
-
-    #@param: level   - denotes the level of sparse grid to check 
-    #        i, j, k - denotes the coordinate of world voxel 
+    ## @param level The level of sparse grid to check
+    #  @param i, j, k The local voxel coordinate 
     #@detail: Return if a child is active
     @ti.func
-    def is_child_active(self, level: ti.template(), i, j, k) -> bool:
-        i, j, k = self.rescale_index_from_world_voxel(level, i, j, k)
+    def is_child_active_local(self, level: ti.template(), i, j, k):
         res = False
 
         if ti.static(level == 0 and self.num_vdb_levels > 1):
@@ -233,10 +280,19 @@ class VdbDataWrapper:
         return res
 
 
-    #@param: vertices - denotes the vertex field that will be field with 1 cube of vertices
-    #        vertex_offset   - denotes offset of in the vertex field to start filling the vertices
-    #        i, j, k  - denotes index of the cube in corresponding cube_dim
-    #        cube_dim - denotes the length of 3 sides of a cube
+    ## @param level denotes the level of sparse grid to check
+    #  @param i, j, k denotes the coordinate of world voxel
+    #  @return Active status of a child in \a level and world voxel coodinates (i, j, k) 
+    @ti.func
+    def is_child_active_world(self, level: ti.template(), i, j, k) -> bool:
+        i, j, k = self.rescale_index_from_world_voxel(level, i, j, k)
+        return self.is_child_active_local(i, j, k)
+
+
+    ## @param vertices denotes The vertex field that will be field with 1 cube of vertices
+    #  @param vertex_offset The offset of in the vertex field to start filling the vertices
+    #  @param i, j, k The index of the cube in corresponding cube_dim
+    #  @param cube_dim The dimensions of specified cube
     @ti.func
     def fill_vdb_bbox_cube_vertices(self, vertices:ti.template(), vertex_offset, indices: ti.template(), index_offset, i, j, k, cube_dim: ti.template()):
         position_offset = ti.Vector([i, j, k]) * cube_dim
@@ -291,8 +347,9 @@ class VdbDataWrapper:
 
 
 
-    #@param: vertices  - denotes the vertex field that will be filled with vertex information
-    #@detail: Fill the vertices with formatted order of points that will be used by VdbViewer
+    ## @param vertices The vertex field of visualized bounding box
+    #  @param indices The index field of visualized bounding box
+    #  @param per_vertex_color The per_vertex_color field for the visualization in ggui
     @ti.kernel
     def generate_vdb_bbox_vertices_impl(self, vertices: ti.template(), indices: ti.template(), per_vertex_color: ti.template()):
         vertex_count = 0
@@ -382,11 +439,15 @@ class VdbDataWrapper:
                     per_vertex_color[w + vertex_offset] = (0.902, 0.494, 0.133)
 
 
+    ## @param level The level in the vdb to prune 
+    #  @param snode The snode for the child pointer at \a level 
+    #  @param f The value field in the vdb grid to read value from
+    #  @param tolerance The compile-time value that is allowed for different values to be considered the same for pruning
     @ti.func
     def prune_level_tolerance(self, level: ti.template(), snode: ti.template(), f: ti.template(), tolerance: ti.template()):
         assert level + 1 < self.num_vdb_levels, "Must not prune level at or beyond the leaf level."
         config = self.config[level + 1]
-        print(f"Pruning Level: {level}")
+        counter = 0
         for i, j, k in snode:
             is_equal = True
             ni, nj, nk = ti.rescale_index(snode, f, [i, j, k])
@@ -395,25 +456,25 @@ class VdbDataWrapper:
                 nx = ni + x
                 ny = nj + y
                 nz = nk + z
-                # if nx < 5 and ny < 5 and nz < 5:
-                    # print(f"Level {level}; Coord: ({nx}, {ny}, {nz}); Child Active: {self.is_child_active(level + 1, nx, ny, nz)}; Read Value: {self.read_value_local(level + 1, nx, ny, nz)}")
-                if ti.static(level + 1 == self.num_vdb_levels) or not self.is_child_active(level + 1, nx, ny, nz):
+                if ti.static(level + 1 == self.num_vdb_levels) or not self.is_child_active_local(level + 1, nx, ny, nz):
                     if ti.static(tolerance != 0):
-                        is_equal &= approx_equal(self.read_value_local(level + 1, nx, ny, nz), value, tolerance)
+                        is_equal &= approx_equal(f[nx, ny, nz], value, tolerance)
                     else:
-                        is_equal &= (self.read_value_local(level + 1, nx, ny, nz) == value)
+                        is_equal &= (f[nx, ny, nz] == value)
                 else:
                     is_equal &= False
 
                 if not is_equal:
                     break
 
-            print(f"Is all equal at ({i}, {j}, {k}): {is_equal}")
             if is_equal:
                 ti.deactivate(snode, [i, j, k])
+                counter += 1
                 if value != 0.0:
-                    self.set_value(level, i, j, k, value)
+                    self.set_value_local(level, i, j, k, value)
+        print(f"Pruned {counter} nodes in level {level}")
 
+    ## @param tolerance The compile-time value that is allowed for different values to be considered the same for pruning
     @ti.kernel
     def prune(self, tolerance:ti.template()):
         # Prune the tree from bottom up
@@ -426,10 +487,11 @@ class VdbDataWrapper:
         if ti.static(self.num_vdb_levels > 1):
             self.prune_level_tolerance(0, self.child0, self.value1, tolerance)
 
+
 @ti.data_oriented
 class VdbGrid:
 
-    def __init__(self, bounding_box: ti.template(), level_configs=None, dtype=ti.f32, background_value=0.0, origin = ti.Vector([0.0, 0.0, 0.0])):
+    def __init__(self, bounding_box: ti.template(), level_configs=None, dtype=ti.f32, background_value=0.0, origin=ti.Vector([0.0, 0.0, 0.0])):
 
 
         if level_configs is None:
@@ -448,10 +510,10 @@ class VdbGrid:
         config_list = []
         for i in range(self.num_vdb_levels - 1, -1, -1):
             if i + 1 == self.num_vdb_levels:
-                config_list.append(VdbNodeConfig(level_configs[i], level_configs[i], level_configs[i], dtype))
+                config_list.append(VdbLevelConfig(level_configs[i], level_configs[i], level_configs[i], dtype))
 
             else:
-                config_list.append(VdbNodeConfig(level_configs[i], level_configs[i], level_configs[i], dtype, config_list[-1]))
+                config_list.append(VdbLevelConfig(level_configs[i], level_configs[i], level_configs[i], dtype, config_list[-1]))
 
         config_list.reverse()
 
@@ -470,48 +532,48 @@ class VdbGrid:
         self.bounding_box = bounding_box
         self.voxel_dim = (bounding_box[1] - bounding_box[0]) / (1 << self.sconfig[0][0])
 
-        self.data_wrapper = VdbDataWrapper(self.num_vdb_levels, self.config, self.sconfig, self.voxel_dim)
+        self.data_wrapper = VdbDataWrapper(self.num_vdb_levels, self.config, self.sconfig, self.voxel_dim, background_value)
 
     
 
-    #@param: i, j, k denotes the coordinates in the voxel space
+    ##@param: i, j, k denotes the coordinates in the voxel space
     #        value denotes the target value to set
-    #@detail: change the value of voxel to specificed
+    # @detail: change the value of voxel to specificed
     @ti.func
-    def modify_value(self, i, j, k, value, op: ti.template()): 
+    def modify_value_world(self, i, j, k, value, op: ti.template()): 
         if ti.static(op == VdbOpId.set_op):
-            self.data_wrapper.set_value(self.leaf_level, i, j, k, value)
+            self.data_wrapper.set_value_local(self.leaf_level, i, j, k, value)
         elif ti.static(op == VdbOpId.add_op):
-            self.data_wrapper.add_value(self.leaf_level, i, j, k, value)
+            self.data_wrapper.add_value_local(self.leaf_level, i, j, k, value)
         elif ti.static(op == VdbOpId.sub_op):
-            self.data_wrapper.sub_value(self.leaf_level, i, j, k, value)
+            self.data_wrapper.sub_value_local(self.leaf_level, i, j, k, value)
         elif ti.static(op == VdbOpId.mul_op):
-            self.data_wrapper.mul_value(self.leaf_level, i, j, k, value)
+            self.data_wrapper.mul_value_local(self.leaf_level, i, j, k, value)
         elif ti.static(op == VdbOpId.div_op):
-            self.data_wrapper.div_value(self.leaf_level, i, j, k, value)
+            self.data_wrapper.div_value_local(self.leaf_level, i, j, k, value)
         else:
             print("Unrecognized operation to modify vdb value")
             pass
 
     @ti.func
-    def set_value(self, i, j, k, value):
-        self.modify_value(i, j, k, value, VdbOpId.set_op)
+    def set_value_world(self, i, j, k, value):
+        self.modify_value_world(i, j, k, value, VdbOpId.set_op)
 
     @ti.func
-    def add_value(self, i, j, k, value):
-        self.modify_value(i, j, k, value, VdbOpId.add_op)
+    def add_value_world(self, i, j, k, value):
+        self.modify_value_world(i, j, k, value, VdbOpId.add_op)
 
     @ti.func
-    def sub_value(self, i, j, k, value):
-        self.modify_value(i, j, k, value, VdbOpId.sub_op)
+    def sub_value_world(self, i, j, k, value):
+        self.modify_value_world(i, j, k, value, VdbOpId.sub_op)
 
     @ti.func
-    def mul_value(self, i, j, k, value):
-        self.modify_value(i, j, k, value, VdbOpId.mul_op)
+    def mul_value_world(self, i, j, k, value):
+        self.modify_value_world(i, j, k, value, VdbOpId.mul_op)
 
     @ti.func
-    def div_value(self, i, j, k, value):
-        self.modify_value(i, j, k, value, VdbOpId.div_op)
+    def div_value_world(self, i, j, k, value):
+        self.modify_value_world(i, j, k, value, VdbOpId.div_op)
 
     @ti.func
     def read_value_impl(self, level: ti.template(), i, j, k):
@@ -519,7 +581,7 @@ class VdbGrid:
         if ti.static(level + 1 == self.num_vdb_levels):
             res = self.data_wrapper.read_value_world(self.leaf_level, i, j, k)
         else:
-            if not self.data_wrapper.is_child_active(level, i, j, k):
+            if not self.data_wrapper.is_child_active_world(level, i, j, k):
                 res = self.data_wrapper.read_value_world(level, i, j, k)
             else:
                 res = self.read_value_impl(level + 1, i, j, k)

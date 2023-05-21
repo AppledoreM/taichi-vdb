@@ -32,7 +32,7 @@ class VdbViewer:
         self.bounding_box = bounding_box
         self.viewer_voxel_dim = (self.bounding_box[1] - self.bounding_box[0]) / (1 << tpdconfig[0])
 
-        self.window = ti.ui.Window("Vdb Viewer", (1280, 720))
+        self.window = ti.ui.Window("Vdb Viewer", (2160, 1440))
         self.canvas = self.window.get_canvas()
         self.scene = ti.ui.Scene()
         self.camera = ti.ui.Camera()
@@ -46,9 +46,10 @@ class VdbViewer:
         for i in range(self.max_num_indices):
             self.indices[i] = 0
 
-    def run_viewer_frame(self, vdb: VdbGrid):
-        self.clear_frame_data()
-        vdb.data_wrapper.generate_vdb_bbox_vertices_impl(self.vertices, self.indices, self.vertex_color)
+    def run_viewer_frame(self, vdb: VdbGrid, generate_new_frame=True):
+        if generate_new_frame:
+            self.clear_frame_data()
+            vdb.data_wrapper.generate_vdb_bbox_vertices_impl(self.vertices, self.indices, self.vertex_color)
 
         self.camera.track_user_inputs(self.window, movement_speed=0.03, hold_key=ti.ui.LMB)
         self.scene.set_camera(self.camera)
