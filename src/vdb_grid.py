@@ -29,6 +29,7 @@ class VdbOpId:
     div_op = 4
 
 
+
 ## Internal implementation of the vdb grid 
 @ti.data_oriented
 class VdbDataWrapper:
@@ -40,37 +41,40 @@ class VdbDataWrapper:
     #  @param config a taichi vector fields of size num_vdb_levels + 1 that denotes configuration of each level of the vdb grid
     #  @param sconfig a taichi vector fields of size num_vdb_levels + 1 that denotes bottom up configuration of each level of the vdb grid
     #  @param voxel_dim a taichi vector that denotes the dimensions of the smallest voxel
-    def __init__(self, num_vdb_levels, config: ti.template(), sconfig: ti.template(), voxel_dim, background_value):
+    def __init__(self, num_vdb_levels, config: ti.template(), sconfig: ti.template(), voxel_dim, dtype=ti.f32,
+                 background_value=0.0):
         # Temporary lists for ease of construction
         pointer_list = [ ti.root ]
         bitmasked_list = []
         value_list = []
 
         self.voxel_dim = voxel_dim
+        self.inv_voxel_dim = 1.0 / self.voxel_dim
         self.config = config
         self.sconfig = sconfig
         self.num_vdb_levels = ti.static(num_vdb_levels)
         self.background_value = background_value
+        self.dtype = dtype
 
-        # Compile time determinantion of fields
+        # Compile time determination of fields
         if ti.static(self.num_vdb_levels > 0):
-            self.value0 = ti.field(ti.f32)
+            self.value0 = ti.field(dtype)
             value_list.append(self.value0)
             self.leaf_value = self.value0
         if ti.static(self.num_vdb_levels > 1):
-            self.value1 = ti.field(ti.f32)
+            self.value1 = ti.field(dtype)
             value_list.append(self.value1)
             self.leaf_value = self.value1
         if ti.static(self.num_vdb_levels > 2):
-            self.value2 = ti.field(ti.f32)
+            self.value2 = ti.field(dtype)
             value_list.append(self.value2)
             self.leaf_value = self.value2
         if ti.static(self.num_vdb_levels > 3):
-            self.value3 = ti.field(ti.f32)
+            self.value3 = ti.field(dtype)
             value_list.append(self.value3)
             self.leaf_value = self.value3
         if ti.static(self.num_vdb_levels > 4):
-            self.value4 = ti.field(ti.f32)
+            self.value4 = ti.field(dtype)
             value_list.append(self.value4)
             self.leaf_value = self.value4
 
@@ -227,7 +231,7 @@ class VdbDataWrapper:
     def read_value_world(self, level: ti.template(), i, j, k):
         assert level < self.num_vdb_levels, "Level exceeds maximum vdb level {}".format(self.num_vdb_levels)
         
-        res = 0.0
+        res = self.background_value
         if ti.static(level + 1 == self.num_vdb_levels):
             res = self.leaf_value[i, j, k]
         else:
@@ -470,9 +474,8 @@ class VdbDataWrapper:
             if is_equal:
                 ti.deactivate(snode, [i, j, k])
                 counter += 1
-                if value != 0.0:
+                if value != self.background_value:
                     self.set_value_local(level, i, j, k, value)
-        print(f"Pruned {counter} nodes in level {level}")
 
     ## @param tolerance The compile-time value that is allowed for different values to be considered the same for pruning
     @ti.kernel
@@ -501,7 +504,6 @@ class VdbGrid:
             for level_dim in level_configs:
                 vdb_assert(level_dim > 0, "The vdb level dimension must be greater than 0.")
 
-        self.dtype = dtype
         self.num_vdb_levels = ti.static(len(level_configs))
         self.leaf_level = self.num_vdb_levels - 1
         self.origin = origin
@@ -531,8 +533,10 @@ class VdbGrid:
 
         self.bounding_box = bounding_box
         self.voxel_dim = (bounding_box[1] - bounding_box[0]) / (1 << self.sconfig[0][0])
+        self.voxel_extent = ti.Vector([1 << self.sconfig[0][0], 1 << self.sconfig[0][1], 1 << self.sconfig[0][2]])
 
-        self.data_wrapper = VdbDataWrapper(self.num_vdb_levels, self.config, self.sconfig, self.voxel_dim, background_value)
+        self.data_wrapper = VdbDataWrapper(self.num_vdb_levels, self.config, self.sconfig, self.voxel_dim, dtype,
+                                           background_value)
 
     
 
@@ -577,7 +581,7 @@ class VdbGrid:
 
     @ti.func
     def read_value_impl(self, level: ti.template(), i, j, k):
-        res = 0.0
+        res = self.data_wrapper.background_value
         if ti.static(level + 1 == self.num_vdb_levels):
             res = self.data_wrapper.read_value_world(self.leaf_level, i, j, k)
         else:
@@ -589,8 +593,35 @@ class VdbGrid:
         return res
 
     @ti.func
-    def read_value(self, i, j, k):
+    def read_value_world(self, i, j, k):
         return self.read_value_impl(self.leaf_level, i, j, k)
+
+    @ti.func
+    def is_in_range(self, i, j, k) -> bool:
+        return 0 <= i and i < self.voxel_extent[0] and \
+                0 <= j and j < self.voxel_extent[1] and \
+                0 <= k and k < self.voxel_extent[2]
+
+    @ti.func
+    def set_value_coord(self, xyz: ti.template(), value):
+        i, j, k = ti.cast(xyz * self.data_wrapper.inv_voxel_dim, ti.i32)
+        if self.is_in_range(i, j, k):
+            self.set_value_world(i, j, k, value)
+
+    @ti.func
+    def set_value(self, x, y, z, value):
+        i, j, k = ti.cast(ti.Vector([x, y, z]) * self.data_wrapper.inv_voxel_dim, ti.i32)
+        if self.is_in_range(i, j, k):
+            self.set_value_world(i, j, k, value)
+
+    @ti.func
+    def read_value(self, x, y, z):
+        i, j, k = ti.cast(ti.Vector([x, y, z]) * self.data_wrapper.inv_voxel_dim, ti.i32)
+        res = self.data_wrapper.background_value
+        if self.is_in_range(i, j, k):
+            res = self.read_value_world(i, j, k)
+        return res
+
 
     def prune(self, tolerance: ti.template()):
         self.data_wrapper.prune(tolerance)

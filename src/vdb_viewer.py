@@ -32,7 +32,7 @@ class VdbViewer:
         self.bounding_box = bounding_box
         self.viewer_voxel_dim = (self.bounding_box[1] - self.bounding_box[0]) / (1 << tpdconfig[0])
 
-        self.window = ti.ui.Window("Vdb Viewer", (2160, 1440))
+        self.window = ti.ui.Window("Vdb Viewer", (1280, 720))
         self.canvas = self.window.get_canvas()
         self.scene = ti.ui.Scene()
         self.camera = ti.ui.Camera()
