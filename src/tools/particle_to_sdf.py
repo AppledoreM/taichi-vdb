@@ -125,15 +125,9 @@ class ParticleToSdf:
     def mark_surface_vertex(self, smoothing_radius: ti.f32):
         smoothing_voxel_radius = ti.ceil(smoothing_radius * self.vdb.data_wrapper.inv_voxel_dim, ti.i32) - 1
         for i, j, k in self.vdb.data_wrapper.leaf_value:
-            is_surface_cell = False
-            for dx, dy, dz in ti.ndrange((-1, 2), (-1, 2), (-1, 2)):
-                if self.vdb.read_value_world(i + dx, j + dy, k + dz) == 0:
-                    is_surface_cell = True
-                    break
-
-            if is_surface_cell:
-                for dx, dy, dz in ti.static(ti.ndrange((0, 2), (0, 2), (0, 2))):
-                    self.sdf.set_value_world(i + dx, j + dy, k + dz, 1)
+            # TODO: detect surface vertex
+            for dx, dy, dz in ti.static(ti.ndrange((0, 2), (0, 2), (0, 2))):
+                self.sdf.add_value_world(i + dx, j + dy, k + dz, 1)
 
 
     @ti.func
