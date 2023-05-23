@@ -7,11 +7,11 @@ import random
 import open3d as o3d
 import numpy as np
 
-ti.init(arch=ti.cuda, device_memory_GB=14, offline_cache=False, debug=False, kernel_profiler=False)
+ti.init(arch=ti.cuda, device_memory_GB=4, offline_cache=False, debug=False, kernel_profiler=False)
 
 sparse_grid_default_levels = [4, 4, 2]
 bounding_box = [ti.Vector([0.0, 0.0, 0.0]),
-                ti.Vector([1.0, 1.0, 1.0])
+                ti.Vector([8.0, 8.0, 8.0])
                 ]
 voxel_bounding_box = [
     ti.Vector([-1, -1, -1]),
@@ -70,37 +70,36 @@ def read_point_cloud(file_path: str):
 if __name__ == "__main__":
     # unittest.main()
 
-    read_point_cloud("/home/appledorem/Repository/taichi-flip/flip/point_cloud.ply")
-    vdb_grid.prune(0)
+    vdb_viewer = VdbViewer(vdb_grid, bounding_box, num_max_vertices=10000, num_max_indices=30000)
+    counter = 0
+    offset = bounding_box[0]
+    speed = 1
+    direction = ti.Vector([1, 1, 1])
+    prev_offset = offset
+    while True:
+        counter = counter + 1
 
-    # counter = 0
-    # offset = bounding_box[0]
-    # speed = 1
-    # direction = ti.Vector([1, 1, 1])
-    # prev_offset = offset
-    # while True:
-    #     counter = counter + 1
-    #
-    #     if counter % 300 == 0:
-    #         direction = ti.Vector([random.randint(-2, 2), random.randint(-2, 2), random.randint(-2, 2)])
-    #         counter = 0
-    #
-    #     generate_new_frame = False
-    #     if counter % 10 == 0:
-    #         prev_offset = offset
-    #         offset += direction * speed
-    #         offset = ti.min(offset, voxel_bounding_box[1])
-    #         offset = ti.max(offset, voxel_bounding_box[0])
-    #         while prev_offset[0] == offset[0] and prev_offset[1] == offset[1] and prev_offset[2] == offset[2] or \
-    #                 has_equal(offset, voxel_bounding_box[1]) or has_equal(offset, voxel_bounding_box[0]):
-    #             direction = ti.Vector([random.randint(-2, 2), random.randint(-2, 2), random.randint(-2, 2)])
-    #             offset += direction * speed
-    #             offset = ti.min(offset, voxel_bounding_box[1])
-    #             offset = ti.max(offset, voxel_bounding_box[0])
-    #         # ti.deactivate_all_snodes()
-    #         test_basic_write(ti.Vector([int(offset[0]), int(offset[1]), int(offset[2])]))
-    #         vdb_grid.prune(1e-7)
-    #         generate_new_frame = True
-    #
-    #     vdb_viewer.run_viewer_frame(vdb_grid, generate_new_frame)
-    #
+        if counter % 300 == 0:
+            direction = ti.Vector([random.randint(-2, 2), random.randint(-2, 2), random.randint(-2, 2)])
+            ti.deactivate_all_snodes()
+            counter = 0
+
+        generate_new_frame = False
+        if counter % 10 == 0:
+            prev_offset = offset
+            offset += direction * speed
+            offset = ti.min(offset, voxel_bounding_box[1])
+            offset = ti.max(offset, voxel_bounding_box[0])
+            while prev_offset[0] == offset[0] and prev_offset[1] == offset[1] and prev_offset[2] == offset[2] or \
+                    has_equal(offset, voxel_bounding_box[1]) or has_equal(offset, voxel_bounding_box[0]):
+                direction = ti.Vector([random.randint(-2, 2), random.randint(-2, 2), random.randint(-2, 2)])
+                offset += direction * speed
+                offset = ti.min(offset, voxel_bounding_box[1])
+                offset = ti.max(offset, voxel_bounding_box[0])
+            # ti.deactivate_all_snodes()
+            test_basic_write(ti.Vector([int(offset[0]), int(offset[1]), int(offset[2])]))
+            vdb_grid.prune(1e-7)
+            generate_new_frame = True
+
+        vdb_viewer.run_viewer_frame(vdb_grid, generate_new_frame)
+
