@@ -3,6 +3,44 @@
 import taichi as ti
 from src.utils import *
 
+
+@ti.data_oriented
+class VdbTransform:
+    def __init__(self, voxel_extent, voxel_dim, origin):
+        self.voxel_extent = voxel_extent
+        self.voxel_dim = voxel_dim
+        self.inv_voxel_dim = 1.0 / voxel_dim
+        self.origin = origin
+        self.coord_max = voxel_dim * voxel_extent + origin
+
+    @ti.func
+    def voxel_to_coord_packed(self, ijk: ti.template()):
+        return ijk * self.voxel_dim + self.origin
+
+    @ti.func
+    def voxel_to_coord(self, i, j, k):
+        return self.voxel_to_coord_packed(ti.Vector([i, j, k]))
+
+    @ti.func
+    def coord_to_voxel_packed(self, xyz: ti.template()):
+        return ti.cast((xyz - self.origin) * self.inv_voxel_dim, ti.i32)
+
+    @ti.func
+    def coord_to_voxel(self, x, y, z):
+        return self.coord_to_voxel_packed(ti.Vector([x, y, z]))
+
+    @ti.func
+    def is_contain_packed(self, xyz: ti.template()) -> bool:
+        res = self.origin <= xyz
+        res |= xyz < self.coord_max
+        return res[0] and res[1] and res[2]
+
+    @ti.func
+    def is_contain(self, x, y, z):
+        return self.is_contain_packed(ti.Vector([x, y, z]))
+
+
+
 ## Represents the configuration of three dimensions a level in a vdb grid
 class VdbLevelConfig:
     def __init__(self, log2x: int, log2y: int, log2z: int, dtype=ti.f32, child_node=None):
@@ -82,6 +120,8 @@ class VdbDataWrapper:
         for i in ti.static(range(self.num_vdb_levels)):
             bitmasked_list.append(pointer_list[-1].bitmasked(ti.ijk, 1 << config[i]))
             bitmasked_list[-1].place(value_list[i])
+            if ti.static(i == 0):
+                self.level0_bitmasked = bitmasked_list[0]
             if i + 1 < self.num_vdb_levels:
                 pointer_list.append(pointer_list[-1].pointer(ti.ijk, 1 << config[i]))
 
@@ -93,6 +133,12 @@ class VdbDataWrapper:
             self.child2 = pointer_list[3]
         if ti.static(self.num_vdb_levels > 4):
             self.child3 = pointer_list[4]
+
+    ## @brief: Deactivate all internal snodes. Clear all the data.
+    def clear(self):
+        self.level0_bitmasked.deactivate_all()
+        if ti.static(self.num_vdb_levels > 1):
+            self.child0.deactivate_all()
 
     
     ## @param i, j, k The coordinates for the set operation
@@ -490,11 +536,10 @@ class VdbDataWrapper:
         if ti.static(self.num_vdb_levels > 1):
             self.prune_level_tolerance(0, self.child0, self.value1, tolerance)
 
-
 @ti.data_oriented
 class VdbGrid:
 
-    def __init__(self, bounding_box: ti.template(), level_configs=None, dtype=ti.f32, background_value=0.0, origin=ti.Vector([0.0, 0.0, 0.0])):
+    def __init__(self, voxel_dim, level_configs=None, dtype=ti.f32, background_value=0.0, origin=ti.Vector([0.0, 0.0, 0.0])):
 
 
         if level_configs is None:
@@ -506,7 +551,6 @@ class VdbGrid:
 
         self.num_vdb_levels = ti.static(len(level_configs))
         self.leaf_level = self.num_vdb_levels - 1
-        self.origin = origin
 
         # Build configuration of each level
         config_list = []
@@ -531,11 +575,10 @@ class VdbGrid:
             sconfig = self.sconfig[i]
             self.ssize[i] = 1 << (sconfig[0] + sconfig[1] + sconfig[2])
 
-        self.bounding_box = bounding_box
-        self.voxel_dim = (bounding_box[1] - bounding_box[0]) / (1 << self.sconfig[0][0])
-        self.voxel_extent = ti.Vector([1 << self.sconfig[0][0], 1 << self.sconfig[0][1], 1 << self.sconfig[0][2]])
+        voxel_extent = ti.Vector([1 << self.sconfig[0][0], 1 << self.sconfig[0][1], 1 << self.sconfig[0][2]])
+        self.transform = VdbTransform(voxel_extent, voxel_dim, origin)
 
-        self.data_wrapper = VdbDataWrapper(self.num_vdb_levels, self.config, self.sconfig, self.voxel_dim, dtype,
+        self.data_wrapper = VdbDataWrapper(self.num_vdb_levels, self.config, self.sconfig, self.transform.voxel_dim, dtype,
                                            background_value)
 
     
@@ -597,34 +640,29 @@ class VdbGrid:
         return self.read_value_impl(self.leaf_level, i, j, k)
 
     @ti.func
-    def is_in_range(self, i, j, k) -> bool:
-        return 0 <= i and i < self.voxel_extent[0] and \
-                0 <= j and j < self.voxel_extent[1] and \
-                0 <= k and k < self.voxel_extent[2]
-
-    @ti.func
-    def set_value_coord(self, xyz: ti.template(), value):
-        i, j, k = ti.cast(xyz * self.data_wrapper.inv_voxel_dim, ti.i32)
-        if self.is_in_range(i, j, k):
+    def set_value_packed(self, xyz: ti.template(), value):
+        if self.transform.is_contain_packed(xyz):
+            i, j, k = self.transform.coord_to_voxel_packed(xyz)
             self.set_value_world(i, j, k, value)
-
     @ti.func
     def set_value(self, x, y, z, value):
-        i, j, k = ti.cast(ti.Vector([x, y, z]) * self.data_wrapper.inv_voxel_dim, ti.i32)
-        if self.is_in_range(i, j, k):
-            self.set_value_world(i, j, k, value)
+        self.set_value_packed(ti.Vector([x, y, z]), value)
 
     @ti.func
     def read_value(self, x, y, z):
-        i, j, k = ti.cast(ti.Vector([x, y, z]) * self.data_wrapper.inv_voxel_dim, ti.i32)
         res = self.data_wrapper.background_value
-        if self.is_in_range(i, j, k):
+        if self.transform.is_contain(x, y, z):
+            i, j, k = self.transform.coord_to_voxel(x, y, z)
             res = self.read_value_world(i, j, k)
         return res
 
 
     def prune(self, tolerance: ti.template()):
         self.data_wrapper.prune(tolerance)
+
+    def clear(self):
+        self.data_wrapper.clear()
+
 
 
 
