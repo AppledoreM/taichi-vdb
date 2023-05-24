@@ -2,6 +2,7 @@
 # Documentations for an implementation of multi-resolution sparse structure with snode
 import taichi as ti
 from src.utils import *
+from src.vdb_math import *
 
 
 @ti.data_oriented

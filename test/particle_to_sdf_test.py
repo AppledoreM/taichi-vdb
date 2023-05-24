@@ -3,7 +3,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/src")
 import taichi as ti
 
-ti.init(arch=ti.cuda, device_memory_GB=4, offline_cache=True, debug=False, kernel_profiler=True)
+ti.init(arch=ti.cuda, device_memory_GB=8, offline_cache=True, debug=False, kernel_profiler=True)
 # ti.init(arch=ti.cpu, device_memory_GB=10, offline_cache=False, debug=False, kernel_profiler=True)
 
 from src.vdb_grid import *
@@ -41,7 +41,7 @@ def make_shape(point_cloud : ti.template(), shape_id: ti.template()) -> ti.i32:
     return counter
 
 
-vdb_default_levels = [4, 4, 4]
+vdb_default_levels = [5, 4, 4]
 vdb_grid = VdbGrid(voxel_dim, vdb_default_levels)
 
 num_vertices = ti.field(dtype=ti.i32, shape=())
@@ -52,8 +52,9 @@ normal_buffer = ti.Vector.field(n=4, dtype=ti.f32, shape=3000000)
 indices = ti.field(dtype=ti.i32, shape=5000000)
 
 
+use_dual_contouring = True
 show_mesh = False
-profile_epoch = 10
+profile_epoch = 20
 export_mesh = False
 
 if __name__ == "__main__":
@@ -68,7 +69,11 @@ if __name__ == "__main__":
         num_indices[None] = 0
         num_vertices[None] = 0
         vdb_grid.clear()
-        VolumeToMesh.marching_cube(sdf_tool.sdf, vdb_grid, 0.01, num_vertices, vertices, num_indices, indices, normal_buffer)
+        if use_dual_contouring:
+            VolumeToMesh.dual_contouring(sdf_tool.sdf, vdb_grid, 0.01, num_vertices, vertices, num_indices, indices,
+                                       normal_buffer)
+        else:
+            VolumeToMesh.marching_cube(sdf_tool.sdf, vdb_grid, 0.01, num_vertices, vertices, num_indices, indices, normal_buffer)
         print(f"Generated {num_vertices[None]} vertices and {num_indices[None]} indices")
 
     if export_mesh:
@@ -77,12 +82,12 @@ if __name__ == "__main__":
         arr_indices = indices.to_numpy()[:num_indices[None]]
         arr_normals = normal_buffer.to_numpy()[:num_vertices[None]]
         writer.add_vertex_pos(arr_vertices[:, 0], arr_vertices[:, 1], arr_vertices[:, 2])
-        writer.add_vertex_normal(arr_normals[:, 0], arr_normals[:, 1], arr_normals[:, 2])
+        # writer.add_vertex_normal(arr_normals[:, 0], arr_normals[:, 1], arr_normals[:, 2])
         writer.add_faces(arr_indices)
         writer.export("mesh.ply")
 
     if show_mesh:
-        window = ti.ui.Window("Vdb Viewer", (1280, 720))
+        window = ti.ui.Window("Vdb Viewer", (2560, 1440))
         canvas = window.get_canvas()
         scene = ti.ui.Scene()
         camera = ti.ui.Camera()
@@ -90,21 +95,15 @@ if __name__ == "__main__":
 
         while True:
             vdb_grid.clear()
-            camera.track_user_inputs(window, movement_speed=0.03, hold_key=ti.ui.LMB)
+            camera.track_user_inputs(window, movement_speed=0.01, hold_key=ti.ui.LMB)
             scene.set_camera(camera)
             scene.ambient_light((0.8, 0.8, 0.8))
             scene.point_light(pos=(1.5, 1.5, 1.5), color=(1, 1, 1))
             scene.point_light(pos=(3.5, 3, 3.5), color=(0.2, 0.2, 0.2))
             scene.point_light(pos=(0.5, 3, 0.5), color=(0.2, 0.2, 0.2))
-            scene.mesh(vertices=vertices, indices=indices, vertex_count=num_vertices[None], index_count=num_indices[None],
-                       normals=normal_buffer[:,:3])
-
+            # scene.particles(centers=point_cloud, radius=particle_radius)
+            scene.mesh(vertices=vertices, indices=indices, vertex_count=num_vertices[None], index_count=num_indices[None])
             canvas.scene(scene)
             window.show()
-
-    # vdb_viewer = VdbViewer(sdf_tool.sdf, bounding_box, num_max_vertices=10000000, num_max_indices=30000000)
-
-    # while True:
-    #     vdb_viewer.run_viewer_frame(sdf_tool.sdf, True)
 
     ti.profiler.print_kernel_profiler_info()

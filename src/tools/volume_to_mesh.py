@@ -3,6 +3,7 @@
 import taichi as ti
 import numpy as np
 from src.vdb_grid import *
+from src.vdb_math import *
 
 
 @ti.data_oriented
@@ -355,33 +356,34 @@ class VolumeToMesh:
         mark_cell()
 
         @ti.func
-        def get_interpolate_indices(edge_index: ti.template()):
+        def get_interpolate_indices(edge_index: ti.template(), is_compile_time: ti.template() = 1):
             res = ti.Vector.zero(dt=ti.i32, n=2)
 
-            if ti.static(edge_index == 0):
-                res = ti.Vector([0, 1])
-            elif ti.static(edge_index == 1):
-                res = ti.Vector([1, 2])
-            elif ti.static(edge_index == 2):
-                res = ti.Vector([2, 3])
-            elif ti.static(edge_index == 3):
-                res = ti.Vector([3, 0])
-            elif ti.static(edge_index == 4):
-                res = ti.Vector([4, 5])
-            elif ti.static(edge_index == 5):
-                res = ti.Vector([5, 6])
-            elif ti.static(edge_index == 6):
-                res = ti.Vector([6, 7])
-            elif ti.static(edge_index == 7):
-                res = ti.Vector([7, 4])
-            elif ti.static(edge_index == 8):
-                res = ti.Vector([0, 4])
-            elif ti.static(edge_index == 9):
-                res = ti.Vector([1, 5])
-            elif ti.static(edge_index == 10):
-                res = ti.Vector([2, 6])
-            elif ti.static(edge_index == 11):
-                res = ti.Vector([3, 7])
+            if ti.static(is_compile_time):
+                if ti.static(edge_index == 0):
+                    res = ti.Vector([0, 1])
+                elif ti.static(edge_index == 1):
+                    res = ti.Vector([1, 2])
+                elif ti.static(edge_index == 2):
+                    res = ti.Vector([2, 3])
+                elif ti.static(edge_index == 3):
+                    res = ti.Vector([3, 0])
+                elif ti.static(edge_index == 4):
+                    res = ti.Vector([4, 5])
+                elif ti.static(edge_index == 5):
+                    res = ti.Vector([5, 6])
+                elif ti.static(edge_index == 6):
+                    res = ti.Vector([6, 7])
+                elif ti.static(edge_index == 7):
+                    res = ti.Vector([7, 4])
+                elif ti.static(edge_index == 8):
+                    res = ti.Vector([0, 4])
+                elif ti.static(edge_index == 9):
+                    res = ti.Vector([1, 5])
+                elif ti.static(edge_index == 10):
+                    res = ti.Vector([2, 6])
+                elif ti.static(edge_index == 11):
+                    res = ti.Vector([3, 7])
 
             return res
 
@@ -440,55 +442,7 @@ class VolumeToMesh:
 
         # Step 3: Process normals
         if normals is not None:
-            @ti.func
-            def trilinear_interpolate(x_d, y_d, z_d, c000, c001, c010, c100, c011, c101, c110, c111):
-                c00 = c000 * (1 - x_d) + c100 * x_d
-                c01 = c001 * (1 - x_d) + c101 * x_d
-                c10 = c010 * (1 - x_d) + c110 * x_d
-                c11 = c011 * (1 - x_d) + c111 * x_d
 
-                c0 = c00 * (1 - y_d) + c10 * y_d
-                c1 = c01 * (1 - y_d) + c11 * y_d
-
-                return c0 * (1 - z_d) + c1 * z_d
-
-            @ti.func
-            def compute_vertex_normal(x, y, z):
-                normal = ti.Vector.zero(dt=ti.f32, n=3)
-                if x == 0:
-                    normal[0] = -sdf.read_value_world(x + 1, y, z)
-                else:
-                    normal[0] = sdf.read_value_world(x - 1, y, z) - sdf.read_value_world(x + 1, y, z)
-
-                if y == 0:
-                    normal[1] = -sdf.read_value_world(x, y + 1, z)
-                else:
-                    normal[1] = sdf.read_value_world(x, y - 1, z) - sdf.read_value_world(x, y + 1, z)
-
-                if z == 0:
-                    normal[2] = -sdf.read_value_world(x, y, z + 1)
-                else:
-                    normal[2] = sdf.read_value_world(x, y, z - 1) - sdf.read_value_world(x, y, z + 1)
-
-                return ti.math.normalize(normal)
-
-            @ti.func
-            def compute_normal_at(pos: ti.template()):
-
-                i, j, k = sdf.transform.coord_to_voxel_packed(pos)
-                x_d, y_d, z_d = (pos - sdf.transform.voxel_to_coord(i, j, k)) / sdf.transform.voxel_dim
-
-                c000 = compute_vertex_normal(i, j, k)
-                c100 = compute_vertex_normal(i + 1, j, k)
-                c010 = compute_vertex_normal(i, j + 1, k)
-                c001 = compute_vertex_normal(i, j, k + 1)
-                c110 = compute_vertex_normal(i + 1, j + 1, k)
-                c011 = compute_vertex_normal(i, j + 1, k + 1)
-                c101 = compute_vertex_normal(i + 1, j, k + 1)
-                c111 = compute_vertex_normal(i + 1, j + 1, k + 1)
-
-                return ti.math.normalize(trilinear_interpolate(x_d, y_d, z_d, c000, c001, c010, c100, c011, c101, c110,
-                                                               c111))
 
             @ti.func
             def compute_face_normal(vert0: ti.template(), vert1: ti.template(), vert2: ti.template()):
@@ -515,4 +469,303 @@ class VolumeToMesh:
                     normals[i] /= normals[i][3]
 
             process_normal()
+
+
+    @staticmethod
+    def dual_contouring(sdf: VdbGrid, aux: VdbGrid, isovalue: ti.f32, num_vertices: ti.template(),
+                      vertices: ti.template(), num_indices: ti.template(), indices: ti.template(),
+                        normals: ti.template() = None):
+
+        # Step 1: Mark all cells to process
+        @ti.kernel
+        def mark_cell():
+            for i, j, k in sdf.data_wrapper.leaf_value:
+                for dx, dy, dz in ti.static(ti.ndrange((-1, 1), (-1, 1), (-1, 1))):
+                    aux.add_value_world(i + dx, j + dy, k + dz, 1)
+
+        mark_cell()
+
+        # Step 2: Compute points in each cell
+
+        @ti.func
+        def get_interpolate_indices(edge_index: ti.template(), is_compile_time: ti.template() = 1):
+            res = ti.Vector.zero(dt=ti.i32, n=2)
+            if ti.static(is_compile_time == 1):
+                if ti.static(edge_index == 0):
+                    res = ti.Vector([0, 1])
+                elif ti.static(edge_index == 1):
+                    res = ti.Vector([1, 2])
+                elif ti.static(edge_index == 2):
+                    res = ti.Vector([2, 3])
+                elif ti.static(edge_index == 3):
+                    res = ti.Vector([3, 0])
+                elif ti.static(edge_index == 4):
+                    res = ti.Vector([4, 5])
+                elif ti.static(edge_index == 5):
+                    res = ti.Vector([5, 6])
+                elif ti.static(edge_index == 6):
+                    res = ti.Vector([6, 7])
+                elif ti.static(edge_index == 7):
+                    res = ti.Vector([7, 4])
+                elif ti.static(edge_index == 8):
+                    res = ti.Vector([0, 4])
+                elif ti.static(edge_index == 9):
+                    res = ti.Vector([1, 5])
+                elif ti.static(edge_index == 10):
+                    res = ti.Vector([2, 6])
+                elif ti.static(edge_index == 11):
+                    res = ti.Vector([3, 7])
+            else:
+                if edge_index == 0:
+                    res = ti.Vector([0, 1])
+                elif edge_index == 1:
+                    res = ti.Vector([1, 2])
+                elif edge_index == 2:
+                    res = ti.Vector([2, 3])
+                elif edge_index == 3:
+                    res = ti.Vector([3, 0])
+                elif edge_index == 4:
+                    res = ti.Vector([4, 5])
+                elif edge_index == 5:
+                    res = ti.Vector([5, 6])
+                elif edge_index == 6:
+                    res = ti.Vector([6, 7])
+                elif edge_index == 7:
+                    res = ti.Vector([7, 4])
+                elif edge_index == 8:
+                    res = ti.Vector([0, 4])
+                elif edge_index == 9:
+                    res = ti.Vector([1, 5])
+                elif edge_index == 10:
+                    res = ti.Vector([2, 6])
+                elif edge_index == 11:
+                    res = ti.Vector([3, 7])
+
+            return res
+
+        @ti.func
+        def vertex_interpolate(isolevel, p1, p2, val1, val2, eps=0.00001):
+            offset = 0.0
+            delta = val2 - val1
+
+            if ti.abs(delta) < eps:
+                offset = 0.5
+            else:
+                offset = (isolevel - val1) / delta
+            return p1 + offset * (p2 - p1)
+        @ti.func
+        def trilinear_interpolate(x_d, y_d, z_d, c000, c001, c010, c100, c011, c101, c110, c111):
+            c00 = c000 * (1 - x_d) + c100 * x_d
+            c01 = c001 * (1 - x_d) + c101 * x_d
+            c10 = c010 * (1 - x_d) + c110 * x_d
+            c11 = c011 * (1 - x_d) + c111 * x_d
+
+            c0 = c00 * (1 - y_d) + c10 * y_d
+            c1 = c01 * (1 - y_d) + c11 * y_d
+
+            return c0 * (1 - z_d) + c1 * z_d
+
+        @ti.func
+        def compute_vertex_normal(x, y, z):
+            normal = ti.Vector.zero(dt=ti.f32, n=3)
+            if x == 0:
+                normal[0] = -sdf.read_value_world(x + 1, y, z)
+            else:
+                normal[0] = sdf.read_value_world(x - 1, y, z) - sdf.read_value_world(x + 1, y, z)
+
+            if y == 0:
+                normal[1] = -sdf.read_value_world(x, y + 1, z)
+            else:
+                normal[1] = sdf.read_value_world(x, y - 1, z) - sdf.read_value_world(x, y + 1, z)
+
+            if z == 0:
+                normal[2] = -sdf.read_value_world(x, y, z + 1)
+            else:
+                normal[2] = sdf.read_value_world(x, y, z - 1) - sdf.read_value_world(x, y, z + 1)
+
+            return ti.math.normalize(normal)
+
+        @ti.func
+        def compute_normal_at(pos: ti.template()):
+
+            i, j, k = sdf.transform.coord_to_voxel_packed(pos)
+            x_d, y_d, z_d = (pos - sdf.transform.voxel_to_coord(i, j, k)) / sdf.transform.voxel_dim
+
+            c000 = compute_vertex_normal(i, j, k)
+            c100 = compute_vertex_normal(i + 1, j, k)
+            c010 = compute_vertex_normal(i, j + 1, k)
+            c001 = compute_vertex_normal(i, j, k + 1)
+            c110 = compute_vertex_normal(i + 1, j + 1, k)
+            c011 = compute_vertex_normal(i, j + 1, k + 1)
+            c101 = compute_vertex_normal(i + 1, j, k + 1)
+            c111 = compute_vertex_normal(i + 1, j + 1, k + 1)
+
+            return ti.math.normalize(trilinear_interpolate(x_d, y_d, z_d, c000, c001, c010, c100, c011, c101, c110,
+                                                               c111))
+
+        @ti.kernel
+        def dual_contouring_impl():
+            for i, j, k in aux.data_wrapper.leaf_value:
+                cube_index = 0
+                for w in ti.static(range(8)):
+                    offset = VolumeToMesh.vertex_offset[w]
+                    if sdf.read_value_world(i + offset[0], j + offset[1], k + offset[2]) < isovalue:
+                        cube_index |= ti.static(1 << w)
+
+                if VolumeToMesh.edge_table[cube_index] != 0:
+                    A = ti.Matrix.zero(ti.f32, 4, 4)
+                    cube_voxel_coord = ti.Vector([i, j, k])
+                    count = 0
+                    mean_point = ti.Vector.zero(ti.f32, n=3)
+                    # Calculate mean point
+                    for w in ti.static(range(12)):
+                        edge_byte = ti.static(1 << w)
+                        if VolumeToMesh.edge_table[cube_index] & edge_byte:
+                            interpolate_index0, interpolate_index1 = get_interpolate_indices(w)
+                            vertex0 = cube_voxel_coord + VolumeToMesh.vertex_offset[interpolate_index0]
+                            vertex1 = cube_voxel_coord + VolumeToMesh.vertex_offset[interpolate_index1]
+                            mean_point += vertex_interpolate(isovalue, sdf.transform.voxel_to_coord_packed(vertex0),
+                                                                        sdf.transform.voxel_to_coord_packed(vertex1),
+                                                                        sdf.read_value_world(vertex0[0], vertex0[1],
+                                                                                             vertex0[2]),
+                                                                        sdf.read_value_world(vertex1[0], vertex1[1],
+                                                                                             vertex1[2]) )
+                            count += 1
+
+                    mean_point /= count
+                    count = 0
+                    # Fill A matrix
+                    for w in range(12):
+                        edge_byte = 1 << w
+                        if VolumeToMesh.edge_table[cube_index] & edge_byte:
+                            interpolate_index0, interpolate_index1 = get_interpolate_indices(w, 0)
+                            vertex0 = cube_voxel_coord + VolumeToMesh.vertex_offset[interpolate_index0]
+                            vertex1 = cube_voxel_coord + VolumeToMesh.vertex_offset[interpolate_index1]
+
+                            intersection = vertex_interpolate(isovalue, sdf.transform.voxel_to_coord_packed(vertex0),
+                                                             sdf.transform.voxel_to_coord_packed(vertex1),
+                                                             sdf.read_value_world(vertex0[0], vertex0[1],
+                                                                                  vertex0[2]),
+                                                             sdf.read_value_world(vertex1[0], vertex1[1],
+                                                                                  vertex1[2]) )
+                            normal = compute_normal_at(intersection)
+                            intersection -= mean_point
+
+                            A[count, 0] = normal[0]
+                            A[count, 1] = normal[1]
+                            A[count, 2] = normal[2]
+                            A[count, 3] = normal.dot(intersection)
+                            count += 1
+
+                    # # QR decomposition
+                    Q, Ahat = householder_qr_decomposition(A)
+
+                    local_coord = solve_qef(Ahat)
+                    vertex_coord = local_coord + mean_point
+
+                    vertex_voxel_coord = sdf.transform.coord_to_voxel_packed(vertex_coord)
+                    if vertex_voxel_coord[0] != i or vertex_voxel_coord[1] != j or vertex_voxel_coord[2] != k:
+                        vertex_coord = mean_point
+
+                    vertex_id = ti.atomic_add(num_vertices[None], 1)
+                    vertices[vertex_id] = vertex_coord
+                    aux.set_value_world(i, j, k, vertex_id + 1)
+                else:
+                    aux.set_value_world(i, j, k, 0)
+
+        dual_contouring_impl()
+        aux.prune(0)
+
+        # Step 3: Generate dual contouring polygon
+        @ti.kernel
+        def dual_contouring_polygen():
+            for i, j, k in aux.data_wrapper.leaf_value:
+                cube_index = 0
+                for w in ti.static(range(8)):
+                    offset = VolumeToMesh.vertex_offset[w]
+                    if sdf.read_value_world(i + offset[0], j + offset[1], k + offset[2]) < isovalue:
+                        cube_index |= ti.static(1 << w)
+
+                for w in ti.static(range(12)):
+                    if ti.static(w == 2) or ti.static(w == 3) or ti.static(w == 11):
+                        edge_byte = ti.static(1 << w)
+                        if VolumeToMesh.edge_table[cube_index] & edge_byte:
+                            ind0, ind1 = get_interpolate_indices(w)
+                            cube_voxel_coord0 = ti.Vector([i, j, k])
+                            cube_voxel_coord1 = cube_voxel_coord0
+                            cube_voxel_coord2 = cube_voxel_coord0
+                            cube_voxel_coord3 = cube_voxel_coord0
+
+                            if ti.static(w == 2):
+                                cube_voxel_coord1 += ti.Vector([0, 0, -1])
+                                cube_voxel_coord2 += ti.Vector([0, -1, -1])
+                                cube_voxel_coord3 += ti.Vector([0, -1, 0])
+                            elif ti.static(w == 3):
+                                cube_voxel_coord1 += ti.Vector([0, 0, -1])
+                                cube_voxel_coord2 += ti.Vector([-1, 0, -1])
+                                cube_voxel_coord3 += ti.Vector([-1, 0, 0])
+                            else:
+                                cube_voxel_coord1 += ti.Vector([0, -1, 0])
+                                cube_voxel_coord2 += ti.Vector([-1, -1, 0])
+                                cube_voxel_coord3 += ti.Vector([-1, 0, 0])
+
+                            vi0 = int(aux.read_value_world(cube_voxel_coord0[0], cube_voxel_coord0[1], cube_voxel_coord0[2]))
+                            vi1 = int(aux.read_value_world(cube_voxel_coord1[0], cube_voxel_coord1[1], cube_voxel_coord1[2]))
+                            vi2 = int(aux.read_value_world(cube_voxel_coord2[0], cube_voxel_coord2[1], cube_voxel_coord2[2]))
+                            vi3 = int(aux.read_value_world(cube_voxel_coord3[0], cube_voxel_coord3[1], cube_voxel_coord3[2]))
+
+                            is_z_direction = ti.static(w == 11)
+                            is_not_vertex_0 = (cube_index & (1 << ind0)) != 0
+                            is_revert_face = True if is_not_vertex_0 != is_z_direction else False
+
+                            if vi0 != 0 and vi1 != 0 and vi2 != 0 and vi3 != 0:
+                                vi0, vi1, vi2, vi3 = vi0 - 1, vi1 - 1, vi2 - 1, vi3 - 1
+
+                                index = ti.atomic_add(num_indices[None], 3)
+                                if is_revert_face:
+                                    indices[index] = vi0
+                                    indices[index + 1] = vi1
+                                    indices[index + 2] = vi2
+                                else:
+                                    indices[index] = vi2
+                                    indices[index + 1] = vi1
+                                    indices[index + 2] = vi0
+
+                                index = ti.atomic_add(num_indices[None], 3)
+                                if is_revert_face:
+                                    indices[index] = vi0
+                                    indices[index + 1] = vi2
+                                    indices[index + 2] = vi3
+                                else:
+                                    indices[index] = vi3
+                                    indices[index + 1] = vi2
+                                    indices[index + 2] = vi0
+
+        dual_contouring_polygen()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
