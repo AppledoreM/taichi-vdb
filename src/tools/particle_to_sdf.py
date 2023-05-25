@@ -123,23 +123,30 @@ class ParticleToSdf:
         prune_search_radius = ti.ceil(smoothing_radius * self.vdb.data_wrapper.inv_voxel_dim, ti.i32) - 1
         prune_threshold = 0.1
         Ns = (2 * prune_search_radius[0] - 1) * (2 * prune_search_radius[1] - 1) * (2 * prune_search_radius[2] - 1)
+
         for id in range(num_particles):
             self.G[id] = ti.Matrix.identity(dt=ti.f32, n=3)
-            self.vdb.set_value_packed(particle_pos[id], id + 1)
             i, j, k = self.vdb.transform.coord_to_voxel_packed(particle_pos[id])
-            particle_count = 0
-            for di, dj, dk in ti.ndrange((-prune_search_radius[0], prune_search_radius[0] + 1),
-                                         (-prune_search_radius[1], prune_search_radius[1] + 1),
-                                         (-prune_search_radius[2], prune_search_radius[2] + 1)
-                                         ):
-                ni = i + di
-                nj = j + dj
-                nk = k + dk
-                if self.vdb.read_value_world(ni, nj, nk) > 0:
-                    particle_count += 1
+            self.vdb.set_value_packed(particle_pos[id], id + 1)
 
-            if ti.abs(Ns - particle_count) <= prune_threshold * Ns:
-                self.vdb.set_value_world(i, j, k, 0)
+        # used_particle_count = 0
+        # for id in range(num_particles):
+        #     particle_count = 0
+        #     i, j, k = self.vdb.transform.coord_to_voxel_packed(particle_pos[id])
+        #     for di, dj, dk in ti.ndrange((-prune_search_radius[0], prune_search_radius[0] + 1),
+        #                                  (-prune_search_radius[1], prune_search_radius[1] + 1),
+        #                                  (-prune_search_radius[2], prune_search_radius[2] + 1)
+        #                                  ):
+        #         ni = i + di
+        #         nj = j + dj
+        #         nk = k + dk
+        #         if self.vdb.read_value_world(ni, nj, nk) > 0:
+        #             particle_count += 1
+        #
+        #     if ti.abs(Ns - particle_count) > prune_threshold * Ns:
+        #         used_particle_count += 1
+        #         self.sdf.set_value_packed(particle_pos[id], id + 1)
+        # print(f"{used_particle_count}")
 
 
     @ti.kernel
@@ -157,15 +164,11 @@ class ParticleToSdf:
         if 0 <= q <= 2:
             res = ti.static(1365 / (512 * np.pi)) * ti.pow(1 - q / 2, 8) * (4 * ti.pow(q, 3) + 6.25 * q * q + 4 * q + 1) * G.determinant()
 
-        # if 0 <= q < 1:
-        #     res = ti.static(1 / np.pi) * G.determinant() * (1 - 1.5 * q * q + 0.75 * q * q * q)
-        # elif 1 <= q < 2:
-        #     res = ti.static(1 / np.pi) * G.determinant() * 0.25 * (2 - q) * (2 - q) * (2 - q)
         return res
 
 
     @ti.kernel
-    def compute_sdf_fixed_volume(self,smoothing_radius: ti.f32, volume: ti.f32, sdf_value_cap: ti.f32):
+    def compute_sdf_fixed_volume(self,smoothing_radius: ti.f32, volume: ti.f32):
         smoothing_voxel_radius = ti.ceil(smoothing_radius * self.vdb.data_wrapper.inv_voxel_dim, ti.i32) - 1
         for i, j, k in self.sdf.data_wrapper.leaf_value:
             sdf_value = 0.0
@@ -181,7 +184,7 @@ class ParticleToSdf:
                 nz = k + dz
                 id = int(self.vdb.read_value_world(nx, ny, nz))
 
-                if id > 0: #and sdf_value < sdf_value_cap:
+                if id > 0:
                     sdf_value -= volume * self.anisotropic_kernel(self.x_bar[id - 1] - vertex_pos, self.G[id - 1])
             self.sdf.set_value_world(i, j, k, sdf_value)
 
@@ -241,17 +244,18 @@ class ParticleToSdf:
         particle_volume = ti.static(4 * np.pi / 3) * particle_radius * particle_radius * particle_radius
         # Step 1: Fill particle grid
         self.fill_vdb_grid(particle_pos, num_particles, smoothing_radius)
-        self.vdb.prune(0)
+        # field_copy(self.vdb.data_wrapper.leaf_value, self.sdf.data_wrapper.leaf_value)
+        # self.vdb.prune(0)
+        # self.sdf.clear()
         # Step 2: Compute anisotropic kernel
         self.compute_anisotropic_kernel_with_grid(particle_pos, num_particles, smoothing_radius)
         # Step 3: Mark Surface Vertices
         self.mark_surface_vertex(smoothing_radius)
 
-        sdf_value_cap = 0.2
         # Step 4: Compute sdf with fixed volume
-        self.compute_sdf_fixed_volume(smoothing_radius, particle_volume, sdf_value_cap)
+        self.compute_sdf_fixed_volume(smoothing_radius, particle_volume)
         # Step 5: Rasterize particles
-        # self.rasterize_particles(particle_pos, num_particles, particle_radius)
+        self.rasterize_particles(particle_pos, num_particles, particle_radius)
         # Step 6: Apply filters
 
         # self.vdb.clear()

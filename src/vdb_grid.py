@@ -24,7 +24,7 @@ class VdbTransform:
 
     @ti.func
     def coord_to_voxel_packed(self, xyz: ti.template()):
-        return ti.cast((xyz - self.origin) * self.inv_voxel_dim, ti.i32)
+        return ti.round((xyz - self.origin) * self.inv_voxel_dim, ti.i32)
 
     @ti.func
     def coord_to_voxel(self, x, y, z):
@@ -704,6 +704,17 @@ class VdbGrid:
     @ti.func
     def read_value(self, x, y, z):
         return self.read_value_packed(ti.Vector([x, y, z]))
+
+    @ti.func
+    def add_value_packed(self, xyz: ti.template(), value):
+        if self.transform.is_contain_packed(xyz):
+            i, j, k = self.transform.coord_to_voxel_packed(xyz)
+            self.add_value_world(i, j, k, value)
+
+    @ti.func
+    def add_value(self, x, y, z, value):
+        self.add_value_packed(ti.Vector([x, y, z]), value)
+
 
     def prune(self, tolerance: ti.template()):
         self.data_wrapper.prune(tolerance)
