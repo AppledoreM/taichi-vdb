@@ -359,31 +359,30 @@ class VolumeToMesh:
         def get_interpolate_indices(edge_index: ti.template(), is_compile_time: ti.template() = 1):
             res = ti.Vector.zero(dt=ti.i32, n=2)
 
-            if ti.static(is_compile_time):
-                if ti.static(edge_index == 0):
-                    res = ti.Vector([0, 1])
-                elif ti.static(edge_index == 1):
-                    res = ti.Vector([1, 2])
-                elif ti.static(edge_index == 2):
-                    res = ti.Vector([2, 3])
-                elif ti.static(edge_index == 3):
-                    res = ti.Vector([3, 0])
-                elif ti.static(edge_index == 4):
-                    res = ti.Vector([4, 5])
-                elif ti.static(edge_index == 5):
-                    res = ti.Vector([5, 6])
-                elif ti.static(edge_index == 6):
-                    res = ti.Vector([6, 7])
-                elif ti.static(edge_index == 7):
-                    res = ti.Vector([7, 4])
-                elif ti.static(edge_index == 8):
-                    res = ti.Vector([0, 4])
-                elif ti.static(edge_index == 9):
-                    res = ti.Vector([1, 5])
-                elif ti.static(edge_index == 10):
-                    res = ti.Vector([2, 6])
-                elif ti.static(edge_index == 11):
-                    res = ti.Vector([3, 7])
+            if ti.static(edge_index == 0):
+                res = ti.Vector([0, 1])
+            elif ti.static(edge_index == 1):
+                res = ti.Vector([1, 2])
+            elif ti.static(edge_index == 2):
+                res = ti.Vector([2, 3])
+            elif ti.static(edge_index == 3):
+                res = ti.Vector([3, 0])
+            elif ti.static(edge_index == 4):
+                res = ti.Vector([4, 5])
+            elif ti.static(edge_index == 5):
+                res = ti.Vector([5, 6])
+            elif ti.static(edge_index == 6):
+                res = ti.Vector([6, 7])
+            elif ti.static(edge_index == 7):
+                res = ti.Vector([7, 4])
+            elif ti.static(edge_index == 8):
+                res = ti.Vector([0, 4])
+            elif ti.static(edge_index == 9):
+                res = ti.Vector([1, 5])
+            elif ti.static(edge_index == 10):
+                res = ti.Vector([2, 6])
+            elif ti.static(edge_index == 11):
+                res = ti.Vector([3, 7])
 
             return res
 
@@ -742,29 +741,6 @@ class VolumeToMesh:
                                     indices[index + 2] = vi0
 
         dual_contouring_polygen()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

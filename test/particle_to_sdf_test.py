@@ -3,8 +3,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/src")
 import taichi as ti
 
-ti.init(arch=ti.cuda, device_memory_GB=8, offline_cache=True, debug=False, kernel_profiler=True)
-# ti.init(arch=ti.cpu, device_memory_GB=10, offline_cache=False, debug=False, kernel_profiler=True)
+ti.init(arch=ti.cpu, device_memory_GB=16, offline_cache=True, debug=False, kernel_profiler=True)
 
 from src.vdb_grid import *
 from src.tools.particle_to_sdf import *
@@ -54,26 +53,34 @@ indices = ti.field(dtype=ti.i32, shape=5000000)
 
 use_dual_contouring = True
 show_mesh = False
-profile_epoch = 20
-export_mesh = False
+profile_epoch = 1
+export_mesh = True
+
+
+@ti.kernel
+def print_sdf(sdf: ti.template()):
+    for i, j, k in sdf:
+        value = sdf[i, j, k]
+        print(value)
 
 if __name__ == "__main__":
 
     sdf_tool = ParticleToSdf(voxel_dim, vdb_default_levels, max_num_particles)
-    num_particles = make_shape(point_cloud, shape_sphere)
+    num_particles = make_shape(point_cloud, shape_cube)
     for i in range(profile_epoch):
         sdf_tool.vdb.clear()
         sdf_tool.sdf.clear()
         print(f"{num_particles} in total.")
         sdf_tool.particle_to_sdf_anisotropic(point_cloud, num_particles, particle_radius)
+        # print_sdf(sdf_tool.sdf.data_wrapper.leaf_value)
         num_indices[None] = 0
         num_vertices[None] = 0
         vdb_grid.clear()
         if use_dual_contouring:
-            VolumeToMesh.dual_contouring(sdf_tool.sdf, vdb_grid, 0.01, num_vertices, vertices, num_indices, indices,
+            VolumeToMesh.dual_contouring(sdf_tool.sdf, vdb_grid, 0.0, num_vertices, vertices, num_indices, indices,
                                        normal_buffer)
         else:
-            VolumeToMesh.marching_cube(sdf_tool.sdf, vdb_grid, 0.01, num_vertices, vertices, num_indices, indices, normal_buffer)
+            VolumeToMesh.marching_cube(sdf_tool.sdf, vdb_grid, 0.0, num_vertices, vertices, num_indices, indices, normal_buffer)
         print(f"Generated {num_vertices[None]} vertices and {num_indices[None]} indices")
 
     if export_mesh:

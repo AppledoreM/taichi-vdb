@@ -114,7 +114,8 @@ class ParticleToSdf:
                     Sigma[1, 1] = 1.0 / Sigma[1, 1]
                     Sigma[2, 2] = 1.0 / Sigma[2, 2]
 
-                    self.G[id - 1] = (1 / smoothing_radius) * R @ Sigma @ RT.transpose()
+                    self.G[id - 1] = (1 / smoothing_radius) * R @ Sigma @ R.transpose()
+                    # print(f"{1/smoothing_radius}, {R.determinant()}, {Sigma.determinant()}, {R. determinant()}, {self.G[id - 1].determinant()}")
 
     @ti.kernel
     def fill_vdb_grid(self, particle_pos: ti.template(), num_particles: ti.template(), smoothing_radius: ti.f32):
@@ -143,7 +144,6 @@ class ParticleToSdf:
 
     @ti.kernel
     def mark_surface_vertex(self, smoothing_radius: ti.f32):
-        ti.loop_config(block_dim=8)
         for i, j, k in self.vdb.data_wrapper.leaf_value:
             for dx, dy, dz in ti.static(ti.ndrange((0, 2), (0, 2), (0, 2))):
                 self.sdf.add_value_world(i + dx, j + dy, k + dz, 1)
@@ -152,8 +152,11 @@ class ParticleToSdf:
     @ti.func
     def anisotropic_kernel(self, dx, G):
         q = (G @ dx).norm()
-        q2 = q * q
-        res = ti.static(315 / (64 * np.pi)) * G.determinant() * (1 - q2) * (1 - q2) - (1 - q2)
+        res = 0.0
+        if 0 <= q < 1:
+            res = ti.static(1 / np.pi) * G.determinant() * (1 - 1.5 * q * q + 0.75 * q * q * q)
+        elif 1 <= q < 2:
+            res = ti.static(1 / np.pi) * G.determinant() * 0.25 * (2 - q) * (2 - q) * (2 - q)
         return res
 
 
@@ -174,8 +177,8 @@ class ParticleToSdf:
                 nz = k + dz
                 id = int(self.vdb.read_value_world(nx, ny, nz))
 
-                if id > 0 and sdf_value < sdf_value_cap:
-                    sdf_value += volume * self.anisotropic_kernel(self.x_bar[id - 1] - vertex_pos, self.G[id - 1])
+                if id > 0: #and sdf_value < sdf_value_cap:
+                    sdf_value -= volume * self.anisotropic_kernel(self.x_bar[id - 1] - vertex_pos, self.G[id - 1])
             self.sdf.set_value_world(i, j, k, sdf_value)
 
 
