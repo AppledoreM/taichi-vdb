@@ -16,7 +16,7 @@ class ParticleToSdf:
         assert level_configs is not None, "Level configuration must not be None."
         self.sdf = VdbGrid(voxel_dim, level_configs)
         self.max_num_particles = max_num_particles
-        self.vdb = VdbGrid(voxel_dim, level_configs, ti.i32)
+        self.vdb = VdbGrid(voxel_dim, level_configs, ti.f32)
 
         # Anisotropic kernel
         self.G = ti.Matrix.field(3, 3, ti.f32, shape=max_num_particles)
@@ -153,10 +153,14 @@ class ParticleToSdf:
     def anisotropic_kernel(self, dx, G):
         q = (G @ dx).norm()
         res = 0.0
-        if 0 <= q < 1:
-            res = ti.static(1 / np.pi) * G.determinant() * (1 - 1.5 * q * q + 0.75 * q * q * q)
-        elif 1 <= q < 2:
-            res = ti.static(1 / np.pi) * G.determinant() * 0.25 * (2 - q) * (2 - q) * (2 - q)
+        # Wayland C6
+        if 0 <= q <= 2:
+            res = ti.static(1365 / (512 * np.pi)) * ti.pow(1 - q / 2, 8) * (4 * ti.pow(q, 3) + 6.25 * q * q + 4 * q + 1) * G.determinant()
+
+        # if 0 <= q < 1:
+        #     res = ti.static(1 / np.pi) * G.determinant() * (1 - 1.5 * q * q + 0.75 * q * q * q)
+        # elif 1 <= q < 2:
+        #     res = ti.static(1 / np.pi) * G.determinant() * 0.25 * (2 - q) * (2 - q) * (2 - q)
         return res
 
 
@@ -181,6 +185,54 @@ class ParticleToSdf:
                     sdf_value -= volume * self.anisotropic_kernel(self.x_bar[id - 1] - vertex_pos, self.G[id - 1])
             self.sdf.set_value_world(i, j, k, sdf_value)
 
+    @ti.kernel
+    def rasterize_particles(self, particle_pos: ti.template(), num_particles: ti.template(), particle_radius: ti.template()):
+        particle_radius_voxel = ti.ceil(particle_radius / self.sdf.transform.voxel_dim, ti.i32)
+
+        for id in range(num_particles):
+            pos = particle_pos[id]
+            pos_voxel_coord = self.sdf.transform.coord_to_voxel_packed(pos)
+            for i, j, k in ti.ndrange(
+                    (-particle_radius_voxel[0], particle_radius_voxel[0] + 1),
+                    (-particle_radius_voxel[1], particle_radius_voxel[1] + 1),
+                    (-particle_radius_voxel[2], particle_radius_voxel[2] + 1)
+            ):
+                adjacent_voxel_coord = pos_voxel_coord + ti.Vector([i, j, k])
+                center = self.sdf.transform.voxel_to_coord_packed(adjacent_voxel_coord)
+                value = (center - pos).norm()
+                if value < particle_radius:
+                    self.sdf.max_value_world(adjacent_voxel_coord[0], adjacent_voxel_coord[1], adjacent_voxel_coord[2], value - particle_radius)
+
+    @ti.func
+    def gaussian_filter(self, x: ti.template(), y: ti.template(), z: ti.template()):
+        x2y2z2 = ti.static(x * x + y * y + z * z)
+        coeff = ti.static(1 / ti.pow(ti.sqrt(2 * np.pi), 3))
+        return ti.static(coeff * ti.exp(-x2y2z2 / 2))
+
+    @ti.kernel
+    def gaussian_kernel(self, kernel_width: ti.template()):
+
+        for i, j, k in self.sdf.data_wrapper.leaf_value:
+            filtered_value = 0.0
+            sample_count = 0
+            for di, dj, dk in ti.static(ti.ndrange(
+                    (-kernel_width, kernel_width + 1),
+                    (-kernel_width, kernel_width + 1),
+                    (-kernel_width, kernel_width + 1)
+            )):
+                ni = i + di
+                nj = j + dj
+                nk = k + dk
+                filtered_value += self.sdf.read_value_world(ni, nj, nk)
+                sample_count += 1
+            self.vdb.set_value_world(i, j, k, filtered_value / sample_count)
+
+    @ti.kernel
+    def copy_leaf_value(self):
+        for i, j, k in self.vdb.data_wrapper.leaf_value:
+            value = self.vdb.read_value_world(i, j, k)
+            self.sdf.set_value_world(i, j, k, value)
+
 
 
     ## @brief Implementation of anisotropic kernel sampling of particles
@@ -198,6 +250,16 @@ class ParticleToSdf:
         sdf_value_cap = 0.2
         # Step 4: Compute sdf with fixed volume
         self.compute_sdf_fixed_volume(smoothing_radius, particle_volume, sdf_value_cap)
+        # Step 5: Rasterize particles
+        # self.rasterize_particles(particle_pos, num_particles, particle_radius)
+        # Step 6: Apply filters
+
+        # self.vdb.clear()
+        # self.gaussian_kernel(2)
+        # self.sdf.clear()
+        # self.copy_leaf_value()
+
+
 
 
 

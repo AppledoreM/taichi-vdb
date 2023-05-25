@@ -66,6 +66,9 @@ class VdbOpId:
     sub_op = 2
     mul_op = 3
     div_op = 4
+    min_op = 5
+    max_op = 6
+
 
 
 
@@ -178,6 +181,21 @@ class VdbDataWrapper:
         f[i, j, k] /= value
 
 
+    ## @param i, j, k The coordinates for the atomic min operation
+    #  @param value The value for the atomic min operation
+    #  @param f The field for the atomic min operation
+    @ti.func
+    def min_op(self, i, j, k, value, f: ti.template()):
+        ti.atomic_min(f[i, j, k], value)
+
+    ## @param i, j, k The coordinates for the atomic max operation
+    #  @param value The value for the atomic max operation
+    #  @param f The field for the atomic max operation
+    @ti.func
+    def max_op(self, i, j, k, value, f: ti.template()):
+        ti.atomic_max(f[i, j, k], value)
+
+
     ## @param i, j, k The coordinates for operation to apply
     #  @param value The value for the operation to apply
     #  @param f The field for the operation to apply
@@ -246,6 +264,20 @@ class VdbDataWrapper:
     @ti.func
     def div_value_local(self, level: ti.template(), i, j, k, value):
         self.modify_value(level, i, j, k, value, self.div_op)
+
+    ## @param level The compile-time level to perform atomic min
+    #  @param i, j, k The local voxel coordinates for the min operation
+    #  @param value The value for the min operation
+    @ti.func
+    def min_value_local(self, level: ti.template(), i, j, k, value):
+        self.modify_value(level, i, j, k, value, self.min_op)
+
+    ## @param level The compile-time level to perform atomic max
+    #  @param i, j, k The local voxel coordinates for the max operation
+    #  @param value The value for the max operation
+    @ti.func
+    def max_value_local(self, level: ti.template(), i, j, k, value):
+        self.modify_value(level, i, j, k, value, self.max_op)
 
     ## @param level The compile-time level to read value from  
     #  @param i, j, k The local voxel coordinates to read value from
@@ -599,6 +631,10 @@ class VdbGrid:
             self.data_wrapper.mul_value_local(self.leaf_level, i, j, k, value)
         elif ti.static(op == VdbOpId.div_op):
             self.data_wrapper.div_value_local(self.leaf_level, i, j, k, value)
+        elif ti.static(op == VdbOpId.min_op):
+            self.data_wrapper.min_value_local(self.leaf_level, i, j, k, value)
+        elif ti.static(op == VdbOpId.max_op):
+            self.data_wrapper.max_value_local(self.leaf_level, i, j, k, value)
         else:
             print("Unrecognized operation to modify vdb value")
             pass
@@ -622,6 +658,14 @@ class VdbGrid:
     @ti.func
     def div_value_world(self, i, j, k, value):
         self.modify_value_world(i, j, k, value, VdbOpId.div_op)
+
+    @ti.func
+    def min_value_world(self, i, j, k, value):
+        self.modify_value_world(i, j, k, value, VdbOpId.min_op)
+
+    @ti.func
+    def max_value_world(self, i, j, k, value):
+        self.modify_value_world(i, j, k, value, VdbOpId.max_op)
 
     @ti.func
     def read_value_impl(self, level: ti.template(), i, j, k):
@@ -650,19 +694,23 @@ class VdbGrid:
         self.set_value_packed(ti.Vector([x, y, z]), value)
 
     @ti.func
-    def read_value(self, x, y, z):
+    def read_value_packed(self, xyz: ti.template()):
         res = self.data_wrapper.background_value
-        if self.transform.is_contain(x, y, z):
-            i, j, k = self.transform.coord_to_voxel(x, y, z)
+        if self.transform.is_contain_packed(xyz):
+            i, j, k = self.transform.coord_to_voxel_packed(xyz)
             res = self.read_value_world(i, j, k)
         return res
 
+    @ti.func
+    def read_value(self, x, y, z):
+        return self.read_value_packed(ti.Vector([x, y, z]))
 
     def prune(self, tolerance: ti.template()):
         self.data_wrapper.prune(tolerance)
 
     def clear(self):
         self.data_wrapper.clear()
+
 
 
 

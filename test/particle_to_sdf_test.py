@@ -72,7 +72,7 @@ if __name__ == "__main__":
         sdf_tool.sdf.clear()
         print(f"{num_particles} in total.")
         sdf_tool.particle_to_sdf_anisotropic(point_cloud, num_particles, particle_radius)
-        # print_sdf(sdf_tool.sdf.data_wrapper.leaf_value)
+        print_sdf(sdf_tool.sdf.data_wrapper.leaf_value)
         num_indices[None] = 0
         num_vertices[None] = 0
         vdb_grid.clear()
