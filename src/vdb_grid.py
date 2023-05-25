@@ -682,7 +682,10 @@ class VdbGrid:
 
     @ti.func
     def read_value_world(self, i, j, k):
-        return self.read_value_impl(self.leaf_level, i, j, k)
+        res = self.data_wrapper.background_value
+        if i >= 0 and j >= 0 and k >= 0:
+            res = self.read_value_impl(self.leaf_level, i, j, k)
+        return res
 
     @ti.func
     def set_value_packed(self, xyz: ti.template(), value):

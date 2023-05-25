@@ -3,7 +3,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/src")
 import taichi as ti
 
-ti.init(arch=ti.cpu, device_memory_GB=14, offline_cache=False, debug=False, kernel_profiler=True)
+ti.init(arch=ti.cuda, device_memory_GB=4, offline_cache=False, debug=True, kernel_profiler=True)
 
 from src.vdb_grid import *
 from src.tools.particle_to_sdf import *
@@ -13,7 +13,7 @@ from src.tools.volume_to_mesh import *
 particle_radius = 0.008
 voxel_dim = ti.Vector([particle_radius * 1, particle_radius * 1, particle_radius * 1])
 
-max_num_particles = 10000000
+max_num_particles = 2000000
 point_cloud = ti.Vector.field(3, ti.f32, max_num_particles)
 
 shape_cube = 0
@@ -45,9 +45,9 @@ vdb_grid = VdbGrid(voxel_dim, vdb_default_levels)
 num_vertices = ti.field(dtype=ti.i32, shape=())
 num_indices = ti.field(dtype=ti.i32, shape=())
 
-vertices = ti.Vector.field(n=3, dtype=ti.f32, shape=50000000)
+vertices = ti.Vector.field(n=3, dtype=ti.f32, shape=5000000)
 normal_buffer = ti.Vector.field(n=4, dtype=ti.f32, shape=3000000)
-indices = ti.field(dtype=ti.i32, shape=100000000)
+indices = ti.field(dtype=ti.i32, shape=10000000)
 
 
 use_dual_contouring = True
@@ -82,14 +82,16 @@ def test_kernel():
 
 def read_particles():
     import_particle_count = 0
-    with open("/Users/appledorem/serialized_frame_500.txt") as f:
+    with open("/home/taichi/serialized_frame_500.txt") as f:
         for line in f.readlines():
             line = line[:-1]
             pos = line.split(",")
-            point_cloud[import_particle_count] = ti.Vector([float(pos[0]), float(pos[1]), float(pos[2])])
-            import_particle_count += 1
-            if import_particle_count % 10000 == 0:
-                print(f"Read {import_particle_count} particles")
+            pos_vec = ti.Vector([float(pos[0]), float(pos[1]), float(pos[2])])
+            if pos_vec[0] >= 0.0 and pos_vec[1] >= 0.0 and pos_vec[2] >= 0.0:
+                point_cloud[import_particle_count] = pos_vec
+                import_particle_count += 1
+                if import_particle_count % 10000 == 0:
+                    print(f"Read {import_particle_count} particles")
     print("Finished Reading")
     return import_particle_count
 
