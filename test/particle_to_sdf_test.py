@@ -3,18 +3,17 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/src")
 import taichi as ti
 
-ti.init(arch=ti.cuda, device_memory_GB=4, offline_cache=True, debug=False, kernel_profiler=True)
+ti.init(arch=ti.cpu, device_memory_GB=14, offline_cache=False, debug=False, kernel_profiler=True)
 
 from src.vdb_grid import *
 from src.tools.particle_to_sdf import *
 from src.vdb_viewer import *
 from src.tools.volume_to_mesh import *
 
-particle_radius = 0.005
-voxel_dim = ti.Vector([particle_radius * 2, particle_radius * 2, particle_radius * 2])
+particle_radius = 0.008
+voxel_dim = ti.Vector([particle_radius * 1, particle_radius * 1, particle_radius * 1])
 
-# This is a cube of size 100 * 100 * 100
-max_num_particles = 1000000
+max_num_particles = 10000000
 point_cloud = ti.Vector.field(3, ti.f32, max_num_particles)
 
 shape_cube = 0
@@ -46,9 +45,9 @@ vdb_grid = VdbGrid(voxel_dim, vdb_default_levels)
 num_vertices = ti.field(dtype=ti.i32, shape=())
 num_indices = ti.field(dtype=ti.i32, shape=())
 
-vertices = ti.Vector.field(n=3, dtype=ti.f32, shape=300000)
-normal_buffer = ti.Vector.field(n=4, dtype=ti.f32, shape=300000)
-indices = ti.field(dtype=ti.i32, shape=500000)
+vertices = ti.Vector.field(n=3, dtype=ti.f32, shape=50000000)
+normal_buffer = ti.Vector.field(n=4, dtype=ti.f32, shape=3000000)
+indices = ti.field(dtype=ti.i32, shape=100000000)
 
 
 use_dual_contouring = True
@@ -81,18 +80,29 @@ def test_kernel():
     print(sdf_tool.vdb.transform.coord_to_voxel_packed(ti.Vector([0.5, 1.2, 1.04])))
     print(sdf_tool.vdb.transform.coord_to_voxel_packed(ti.Vector([0.5, 1.2, 1.05])))
 
+def read_particles():
+    import_particle_count = 0
+    with open("/Users/appledorem/serialized_frame_500.txt") as f:
+        for line in f.readlines():
+            line = line[:-1]
+            pos = line.split(",")
+            point_cloud[import_particle_count] = ti.Vector([float(pos[0]), float(pos[1]), float(pos[2])])
+            import_particle_count += 1
+            if import_particle_count % 10000 == 0:
+                print(f"Read {import_particle_count} particles")
+    print("Finished Reading")
+    return import_particle_count
+
+
 if __name__ == "__main__":
 
-    print(sdf_tool.vdb.transform.inv_voxel_dim)
-    print(sdf_tool.vdb.transform.origin)
-    test_kernel()
-    num_particles = make_shape(point_cloud, shape_sphere)
+    # num_particles = make_shape(point_cloud, shape_sphere)
+    num_particles = read_particles()
     for i in range(profile_epoch):
         sdf_tool.vdb.clear()
         sdf_tool.sdf.clear()
-        print(f"{num_particles} in total.")
+        print(f"{num_particles} of particles in total.")
         sdf_tool.particle_to_sdf_anisotropic(point_cloud, num_particles, particle_radius)
-        # print_sdf(sdf_tool.sdf.data_wrapper.leaf_value)
         num_indices[None] = 0
         num_vertices[None] = 0
         vdb_grid.clear()

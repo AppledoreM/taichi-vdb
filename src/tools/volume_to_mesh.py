@@ -659,8 +659,8 @@ class VolumeToMesh:
                     # # QR decomposition
                     Q, Ahat = householder_qr_decomposition(A)
 
-                    local_coord = solve_qef(Ahat)
-                    vertex_coord = local_coord + mean_point
+                    # local_coord = solve_qef(Ahat)
+                    vertex_coord = mean_point
 
                     vertex_voxel_coord = sdf.transform.coord_to_voxel_packed(vertex_coord)
                     if vertex_voxel_coord[0] != i or vertex_voxel_coord[1] != j or vertex_voxel_coord[2] != k:
