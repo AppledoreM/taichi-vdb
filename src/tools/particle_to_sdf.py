@@ -160,9 +160,10 @@ class ParticleToSdf:
         q = (G @ dx).norm()
         res = 0.0
         # Wayland C6
-        if 0 <= q <= 2:
-            res = ti.static(1365 / (512 * np.pi)) * ti.pow(1 - q / 2, 8) * (
-                    4 * ti.pow(q, 3) + 6.25 * q * q + 4 * q + 1) * G.determinant()
+        # if 0 <= q <= 2:
+        #     res = ti.static(1365 / (512 * np.pi)) * ti.pow(1 - q / 2, 8) * (
+        #             4 * ti.pow(q, 3) + 6.25 * q * q + 4 * q + 1) * G.determinant()
+        res = 315 / (64 * np.pi) * G.determinant() * ti.pow(1 - q * q, 3)
 
         return res
 
@@ -184,7 +185,7 @@ class ParticleToSdf:
                 id = int(self.vdb.read_value_world(nx, ny, nz))
 
                 if id > 0:
-                    sdf_value -= volume * self.anisotropic_kernel(self.x_bar[id - 1] - vertex_pos, self.G[id - 1])
+                    sdf_value += volume * self.anisotropic_kernel(self.x_bar[id - 1] - vertex_pos, self.G[id - 1])
             self.sdf.set_value_world(i, j, k, sdf_value)
 
     @ti.kernel
@@ -206,7 +207,6 @@ class ParticleToSdf:
                 if value - particle_radius < 0 or self.sdf.read_value_world(adjacent_voxel_coord[0], adjacent_voxel_coord[1], adjacent_voxel_coord[2]) >= 0.0:
                     self.vdb.max_value_world(adjacent_voxel_coord[0], adjacent_voxel_coord[1], adjacent_voxel_coord[2],
                                              value - particle_radius)
-                    # print(f"Value {value} radius: {particle_radius}")
 
 
     @ti.func
@@ -295,30 +295,31 @@ class ParticleToSdf:
         # Step 4: Compute sdf with fixed volume
         self.compute_sdf_fixed_volume(smoothing_radius, particle_volume)
         # Step 5: Rasterize particles
-        self.vdb.clear()
-        field_copy(self.vdb.data_wrapper.leaf_value, self.sdf.data_wrapper.leaf_value)
-        self.rasterize_particles(particle_pos, num_particles, particle_radius)
-        self.sdf.clear()
-        field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
 
-        # # Dilate
+        # self.vdb.clear()
+        # field_copy(self.vdb.data_wrapper.leaf_value, self.sdf.data_wrapper.leaf_value)
+        # self.rasterize_particles(particle_pos, num_particles, particle_radius)
+        # self.sdf.clear()
+        # field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
+
+        # Dilate
         # self.vdb.clear()
         # field_copy(self.vdb.data_wrapper.leaf_value, self.sdf.data_wrapper.leaf_value)
         # self.dilate_kernel()
         # self.sdf.clear()
         # field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
-        #
-        # self.vdb.clear()
-        # self.gaussian_kernel(1)
-        # self.sdf.clear()
-        # field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
-        #
-        # # Erode
+        
+        self.vdb.clear()
+        self.gaussian_kernel(1)
+        self.sdf.clear()
+        field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
+        
+        # Erode
         # self.vdb.clear()
         # self.erode_kernel()
         # self.sdf.clear()
         # field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
-        #
+        
         # self.vdb.clear()
         # self.erode_kernel()
         # self.sdf.clear()
