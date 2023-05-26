@@ -206,6 +206,7 @@ class ParticleToSdf:
                 if value - particle_radius < 0 or self.sdf.read_value_world(adjacent_voxel_coord[0], adjacent_voxel_coord[1], adjacent_voxel_coord[2]) >= 0.0:
                     self.vdb.max_value_world(adjacent_voxel_coord[0], adjacent_voxel_coord[1], adjacent_voxel_coord[2],
                                              value - particle_radius)
+                    # print(f"Value {value} radius: {particle_radius}")
 
 
     @ti.func
