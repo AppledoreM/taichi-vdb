@@ -543,15 +543,10 @@ class VolumeToMesh:
             return res
 
         @ti.func
-        def vertex_interpolate(isolevel, p1, p2, val1, val2, eps=0.00001):
-            offset = 0.0
-            delta = val2 - val1
-
-            if ti.abs(delta) < eps:
-                offset = 0.5
-            else:
-                offset = (isolevel - val1) / delta
-            return p1 + offset * (p2 - p1)
+        def vertex_interpolate(isovalue, p1, p2, val1, val2, eps=0.00001):
+            print(isovalue, val1, val2)
+            mu = (isovalue - val1) / (val2 - val1)
+            return p1 + mu * (p2 - p1)
         @ti.func
         def trilinear_interpolate(x_d, y_d, z_d, c000, c001, c010, c100, c011, c101, c110, c111):
             c00 = c000 * (1 - x_d) + c100 * x_d
@@ -568,19 +563,19 @@ class VolumeToMesh:
         def compute_vertex_normal(x, y, z):
             normal = ti.Vector.zero(dt=ti.f32, n=3)
             if x == 0:
-                normal[0] = -sdf.read_value_world(x + 1, y, z)
+                normal[0] = -sdf.read_value_world(x + 1, y, z) * sdf.transform.voxel_dim[0]
             else:
-                normal[0] = sdf.read_value_world(x - 1, y, z) - sdf.read_value_world(x + 1, y, z)
+                normal[0] = (sdf.read_value_world(x - 1, y, z) - sdf.read_value_world(x + 1, y, z)) * 0.5 * sdf.transform.voxel_dim[0]
 
             if y == 0:
-                normal[1] = -sdf.read_value_world(x, y + 1, z)
+                normal[1] = -sdf.read_value_world(x, y + 1, z) * sdf.transform.voxel_dim[1]
             else:
-                normal[1] = sdf.read_value_world(x, y - 1, z) - sdf.read_value_world(x, y + 1, z)
+                normal[1] = (sdf.read_value_world(x, y - 1, z) - sdf.read_value_world(x, y + 1, z)) * 0.5 * sdf.transform.voxel_dim[1]
 
             if z == 0:
-                normal[2] = -sdf.read_value_world(x, y, z + 1)
+                normal[2] = -sdf.read_value_world(x, y, z + 1) * sdf.transform.voxel_dim[2]
             else:
-                normal[2] = sdf.read_value_world(x, y, z - 1) - sdf.read_value_world(x, y, z + 1)
+                normal[2] = (sdf.read_value_world(x, y, z - 1) - sdf.read_value_world(x, y, z + 1)) * 0.5 * sdf.transform.voxel_dim[2]
 
             return ti.math.normalize(normal)
 
@@ -589,6 +584,7 @@ class VolumeToMesh:
 
             i, j, k = sdf.transform.coord_to_voxel_packed(pos)
             x_d, y_d, z_d = (pos - sdf.transform.voxel_to_coord(i, j, k)) / sdf.transform.voxel_dim
+            print(f"{pos}, {sdf.transform.voxel_to_coord(i, j, k)}")
 
             c000 = compute_vertex_normal(i, j, k)
             c100 = compute_vertex_normal(i + 1, j, k)
@@ -634,33 +630,32 @@ class VolumeToMesh:
                     mean_point /= count
                     count = 0
                     # Fill A matrix
-                    # for w in range(12):
-                    #     edge_byte = 1 << w
-                    #     if VolumeToMesh.edge_table[cube_index] & edge_byte:
-                    #         interpolate_index0, interpolate_index1 = get_interpolate_indices(w, 0)
-                    #         vertex0 = cube_voxel_coord + VolumeToMesh.vertex_offset[interpolate_index0]
-                    #         vertex1 = cube_voxel_coord + VolumeToMesh.vertex_offset[interpolate_index1]
-                    #
-                    #         intersection = vertex_interpolate(isovalue, sdf.transform.voxel_to_coord_packed(vertex0),
-                    #                                          sdf.transform.voxel_to_coord_packed(vertex1),
-                    #                                          sdf.read_value_world(vertex0[0], vertex0[1],
-                    #                                                               vertex0[2]),
-                    #                                          sdf.read_value_world(vertex1[0], vertex1[1],
-                    #                                                               vertex1[2]) )
-                    #         normal = compute_normal_at(intersection)
-                    #         intersection -= mean_point
-                    #
-                    #         A[count, 0] = normal[0]
-                    #         A[count, 1] = normal[1]
-                    #         A[count, 2] = normal[2]
-                    #         A[count, 3] = normal.dot(intersection)
-                    #         count += 1
-                    #
-                    # # # QR decomposition
-                    # Q, Ahat = householder_qr_decomposition(A)
+                    for w in range(12):
+                        edge_byte = 1 << w
+                        if VolumeToMesh.edge_table[cube_index] & edge_byte:
+                            interpolate_index0, interpolate_index1 = get_interpolate_indices(w, 0)
+                            vertex0 = cube_voxel_coord + VolumeToMesh.vertex_offset[interpolate_index0]
+                            vertex1 = cube_voxel_coord + VolumeToMesh.vertex_offset[interpolate_index1]
 
-                    # local_coord = solve_qef(Ahat)
-                    vertex_coord = mean_point
+                            intersection = vertex_interpolate(isovalue, sdf.transform.voxel_to_coord_packed(vertex0),
+                                                             sdf.transform.voxel_to_coord_packed(vertex1),
+                                                             sdf.read_value_world(vertex0[0], vertex0[1],
+                                                                                  vertex0[2]),
+                                                             sdf.read_value_world(vertex1[0], vertex1[1],
+                                                                                  vertex1[2]))
+                            normal = compute_normal_at(intersection)
+                            # intersection -= mean_point
+                            A[count, 0] = normal[0]
+                            A[count, 1] = normal[1]
+                            A[count, 2] = normal[2]
+                            A[count, 3] = normal.dot(intersection)
+                            count += 1
+
+                    # # QR decomposition
+                    Q, Ahat = householder_qr_decomposition(A)
+
+                    local_coord = solve_qef(Ahat)
+                    vertex_coord = mean_point + local_coord
 
                     vertex_voxel_coord = sdf.transform.coord_to_voxel_packed(vertex_coord)
                     if vertex_voxel_coord[0] != i or vertex_voxel_coord[1] != j or vertex_voxel_coord[2] != k:
@@ -741,6 +736,35 @@ class VolumeToMesh:
                                     indices[index + 2] = vi0
 
         dual_contouring_polygen()
+
+        # Step 3: Process normals
+        if normals is not None:
+            @ti.func
+            def compute_face_normal(vert0: ti.template(), vert1: ti.template(), vert2: ti.template()):
+                p = vert2 - vert0
+                q = vert2 - vert1
+                return ti.math.normalize(q.cross(p))
+
+            @ti.kernel
+            def process_normal():
+                for i in range(num_indices[None] // 3):
+                    ind0 = indices[i * 3]
+                    ind1 = indices[i * 3 + 1]
+                    ind2 = indices[i * 3 + 2]
+
+                    vert0 = vertices[ind0]
+                    vert1 = vertices[ind1]
+                    vert2 = vertices[ind2]
+                    face_normal = compute_face_normal(vert0, vert1, vert2)
+                    normal_buffer = ti.Vector([face_normal[0], face_normal[1], face_normal[2], 1])
+                    normals[ind0] += normal_buffer
+                    normals[ind1] += normal_buffer
+                    normals[ind2] += normal_buffer
+
+                for i in range(num_vertices[None]):
+                    normals[i] /= normals[i][3]
+
+            process_normal()
 
 
 

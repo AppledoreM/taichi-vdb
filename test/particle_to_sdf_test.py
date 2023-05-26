@@ -3,17 +3,17 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/src")
 import taichi as ti
 
-ti.init(arch=ti.cuda, device_memory_GB=4, offline_cache=False, debug=True, kernel_profiler=True)
+ti.init(arch=ti.opengl, device_memory_GB=10, offline_cache=False, debug=True, kernel_profiler=True)
 
 from src.vdb_grid import *
 from src.tools.particle_to_sdf import *
 from src.vdb_viewer import *
 from src.tools.volume_to_mesh import *
 
-particle_radius = 0.008
-voxel_dim = ti.Vector([particle_radius * 1, particle_radius * 1, particle_radius * 1])
+particle_radius = 0.005
+voxel_dim = ti.Vector([particle_radius * 2, particle_radius * 2, particle_radius * 2])
 
-max_num_particles = 2000000
+max_num_particles = 10000000
 point_cloud = ti.Vector.field(3, ti.f32, max_num_particles)
 
 shape_cube = 0
@@ -47,7 +47,7 @@ num_indices = ti.field(dtype=ti.i32, shape=())
 
 vertices = ti.Vector.field(n=3, dtype=ti.f32, shape=5000000)
 normal_buffer = ti.Vector.field(n=4, dtype=ti.f32, shape=3000000)
-indices = ti.field(dtype=ti.i32, shape=10000000)
+indices = ti.field(dtype=ti.i32, shape=20000000)
 
 
 use_dual_contouring = True
@@ -82,7 +82,7 @@ def test_kernel():
 
 def read_particles():
     import_particle_count = 0
-    with open("/home/taichi/serialized_frame_500.txt") as f:
+    with open("/Users/appledorem/serialized_frame_500.txt") as f:
         for line in f.readlines():
             line = line[:-1]
             pos = line.split(",")
@@ -96,21 +96,30 @@ def read_particles():
     return import_particle_count
 
 
+@ti.kernel
+def fill_sphere_sdf(sdf: ti.template()):
+    center = ti.Vector([1, 1, 1])
+    for i, j, k in ti.ndrange((50, 151), (50, 151), (50, 151)):
+        value = (ti.Vector([i, j, k]) * voxel_dim - center).norm()
+        if value < 0.6:
+            sdf[i, j, k] = value - 0.5
+
+
 if __name__ == "__main__":
 
-    # num_particles = make_shape(point_cloud, shape_sphere)
-    num_particles = read_particles()
+    num_particles = make_shape(point_cloud, shape_sphere)
+    # num_particles = read_particles()
     for i in range(profile_epoch):
         sdf_tool.vdb.clear()
         sdf_tool.sdf.clear()
         print(f"{num_particles} of particles in total.")
-        sdf_tool.particle_to_sdf_anisotropic(point_cloud, num_particles, particle_radius)
+        sdf_tool.particle_to_sdf_anisotropic(point_cloud, num_particles, particle_radius, smoothing_radius=0.03)
+        # fill_sphere_sdf(sdf_tool.sdf.data_wrapper.leaf_value)
         num_indices[None] = 0
         num_vertices[None] = 0
         vdb_grid.clear()
         if use_dual_contouring:
-            VolumeToMesh.dual_contouring(sdf_tool.sdf, vdb_grid, 0.0, num_vertices, vertices, num_indices, indices,
-                                       normal_buffer)
+            VolumeToMesh.dual_contouring(sdf_tool.sdf, vdb_grid, 0.0, num_vertices, vertices, num_indices, indices)
         else:
             VolumeToMesh.marching_cube(sdf_tool.sdf, vdb_grid, 0.0, num_vertices, vertices, num_indices, indices, normal_buffer)
         print(f"Generated {num_vertices[None]} vertices and {num_indices[None]} indices")

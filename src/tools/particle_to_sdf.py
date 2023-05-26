@@ -150,7 +150,7 @@ class ParticleToSdf:
         # print(f"{used_particle_count}")
 
     @ti.kernel
-    def mark_surface_vertex(self, smoothing_radius: ti.f32):
+    def mark_surface_vertex(self):
         for i, j, k in self.vdb.data_wrapper.leaf_value:
             for dx, dy, dz in ti.static(ti.ndrange((0, 2), (0, 2), (0, 2))):
                 self.sdf.add_value_world(i + dx, j + dy, k + dz, 1)
@@ -190,7 +190,7 @@ class ParticleToSdf:
     @ti.kernel
     def rasterize_particles(self, particle_pos: ti.template(), num_particles: ti.template(),
                             particle_radius: ti.template()):
-        particle_radius_voxel = ti.ceil(particle_radius / self.sdf.transform.voxel_dim, ti.i32)
+        particle_radius_voxel = 1 + ti.ceil(particle_radius / self.sdf.transform.voxel_dim, ti.i32)
 
         for id in range(num_particles):
             pos = particle_pos[id]
@@ -203,9 +203,8 @@ class ParticleToSdf:
                 adjacent_voxel_coord = pos_voxel_coord + ti.Vector([i, j, k])
                 center = self.sdf.transform.voxel_to_coord_packed(adjacent_voxel_coord)
                 value = (center - pos).norm()
-                if value < particle_radius:
-                    self.sdf.max_value_world(adjacent_voxel_coord[0], adjacent_voxel_coord[1], adjacent_voxel_coord[2],
-                                             value - particle_radius)
+                self.sdf.max_value_world(adjacent_voxel_coord[0], adjacent_voxel_coord[1], adjacent_voxel_coord[2],
+                                         value - particle_radius)
 
     @ti.func
     def gaussian_filter(self, x: ti.template(), y: ti.template(), z: ti.template()):
@@ -230,6 +229,52 @@ class ParticleToSdf:
                 filtered_value += self.sdf.read_value_world(ni, nj, nk) * ti.static(self.gaussian_filter(di, dj, dk))
             self.vdb.set_value_world(i, j, k, filtered_value)
 
+    @ti.func
+    def can_dilate(self, i, j, k):
+        return self.sdf.read_value_world(i, j, k) >= 0.0
+
+    @ti.kernel
+    def dilate_kernel(self):
+
+        for i, j, k in self.sdf.data_wrapper.leaf_value:
+            value = self.sdf.read_value_world(i, j, k)
+            if value < 0.0:
+                if self.can_dilate(i + 1, j, k):
+                    self.vdb.max_value_world(i + 1, j, k, 0.0)
+                if self.can_dilate(i - 1, j, k):
+                    self.vdb.max_value_world(i - 1, j, k, 0.0)
+                if self.can_dilate(i, j + 1, k):
+                    self.vdb.max_value_world(i, j + 1, k, 0.0)
+                if self.can_dilate(i, j - 1, k):
+                    self.vdb.max_value_world(i, j - 1, k, 0.0)
+                if self.can_dilate(i, j, k + 1):
+                    self.vdb.max_value_world(i, j, k + 1, 0.0)
+                if self.can_dilate(i, j, k - 1):
+                    self.vdb.max_value_world(i, j, k - 1, 0.0)
+
+    @ti.func
+    def can_erode(self, i, j, k):
+        return self.sdf.read_value_world(i, j, k) >= 0.0
+    @ti.kernel
+    def erode_kernel(self):
+
+        for i, j, k in self.sdf.data_wrapper.leaf_value:
+            value = self.sdf.read_value_world(i, j, k)
+            if value < 0.0:
+                is_erode = self.can_erode(i + 1, j, k)
+                is_erode |= self.can_erode(i - 1, j, k)
+                is_erode |= self.can_erode(i, j + 1, k)
+                is_erode |= self.can_erode(i, j - 1, k)
+                is_erode |= self.can_erode(i, j, k + 1)
+                is_erode |= self.can_erode(i, j, k - 1)
+
+                if not is_erode:
+                    self.vdb.set_value_world(i, j, k, value)
+
+
+
+
+
     ## @brief Implementation of anisotropic kernel sampling of particles
     def particle_to_sdf_anisotropic(self, particle_pos: ti.template(), num_particles: ti.template(),
                                     particle_radius: ti.f32, smoothing_radius=0.03):
@@ -242,9 +287,33 @@ class ParticleToSdf:
         # Step 2: Compute anisotropic kernel
         self.compute_anisotropic_kernel_with_grid(particle_pos, num_particles, smoothing_radius)
         # Step 3: Mark Surface Vertices
-        self.mark_surface_vertex(smoothing_radius)
+        self.mark_surface_vertex()
 
         # Step 4: Compute sdf with fixed volume
         self.compute_sdf_fixed_volume(smoothing_radius, particle_volume)
         # Step 5: Rasterize particles
         self.rasterize_particles(particle_pos, num_particles, particle_radius)
+
+        # # Dilate
+        # self.vdb.clear()
+        # field_copy(self.vdb.data_wrapper.leaf_value, self.sdf.data_wrapper.leaf_value)
+        # self.dilate_kernel()
+        # self.sdf.clear()
+        # field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
+        #
+        # self.vdb.clear()
+        # self.gaussian_kernel(1)
+        # self.sdf.clear()
+        # field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
+        #
+        # # Erode
+        # self.vdb.clear()
+        # self.erode_kernel()
+        # self.sdf.clear()
+        # field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
+        #
+        # self.vdb.clear()
+        # self.erode_kernel()
+        # self.sdf.clear()
+        # field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
+
