@@ -544,7 +544,6 @@ class VolumeToMesh:
 
         @ti.func
         def vertex_interpolate(isovalue, p1, p2, val1, val2, eps=0.00001):
-            print(isovalue, val1, val2)
             mu = (isovalue - val1) / (val2 - val1)
             return p1 + mu * (p2 - p1)
         @ti.func
@@ -584,7 +583,6 @@ class VolumeToMesh:
 
             i, j, k = sdf.transform.coord_to_voxel_packed(pos)
             x_d, y_d, z_d = (pos - sdf.transform.voxel_to_coord(i, j, k)) / sdf.transform.voxel_dim
-            print(f"{pos}, {sdf.transform.voxel_to_coord(i, j, k)}")
 
             c000 = compute_vertex_normal(i, j, k)
             c100 = compute_vertex_normal(i + 1, j, k)

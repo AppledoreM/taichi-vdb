@@ -3,7 +3,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/src")
 import taichi as ti
 
-ti.init(arch=ti.opengl, device_memory_GB=10, offline_cache=False, debug=True, kernel_profiler=True)
+ti.init(arch=ti.cuda, device_memory_GB=4, offline_cache=False, debug=False, kernel_profiler=True)
 
 from src.vdb_grid import *
 from src.tools.particle_to_sdf import *
@@ -45,9 +45,9 @@ vdb_grid = VdbGrid(voxel_dim, vdb_default_levels)
 num_vertices = ti.field(dtype=ti.i32, shape=())
 num_indices = ti.field(dtype=ti.i32, shape=())
 
-vertices = ti.Vector.field(n=3, dtype=ti.f32, shape=5000000)
+vertices = ti.Vector.field(n=3, dtype=ti.f32, shape=1000000)
 normal_buffer = ti.Vector.field(n=4, dtype=ti.f32, shape=3000000)
-indices = ti.field(dtype=ti.i32, shape=20000000)
+indices = ti.field(dtype=ti.i32, shape=2000000)
 
 
 use_dual_contouring = True

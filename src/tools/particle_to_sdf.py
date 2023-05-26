@@ -201,10 +201,12 @@ class ParticleToSdf:
                     (-particle_radius_voxel[2], particle_radius_voxel[2] + 1)
             ):
                 adjacent_voxel_coord = pos_voxel_coord + ti.Vector([i, j, k])
-                center = self.sdf.transform.voxel_to_coord_packed(adjacent_voxel_coord)
+                center = self.sdf.transform.voxel_to_coord_packed(adjacent_voxel_coord + ti.Vector([0.5, 0.5, 0.5]))
                 value = (center - pos).norm()
-                self.sdf.max_value_world(adjacent_voxel_coord[0], adjacent_voxel_coord[1], adjacent_voxel_coord[2],
-                                         value - particle_radius)
+                if value - particle_radius < 0 or self.sdf.read_value_world(adjacent_voxel_coord[0], adjacent_voxel_coord[1], adjacent_voxel_coord[2]) >= 0.0:
+                    self.vdb.max_value_world(adjacent_voxel_coord[0], adjacent_voxel_coord[1], adjacent_voxel_coord[2],
+                                             value - particle_radius)
+
 
     @ti.func
     def gaussian_filter(self, x: ti.template(), y: ti.template(), z: ti.template()):
@@ -292,7 +294,11 @@ class ParticleToSdf:
         # Step 4: Compute sdf with fixed volume
         self.compute_sdf_fixed_volume(smoothing_radius, particle_volume)
         # Step 5: Rasterize particles
+        self.vdb.clear()
+        field_copy(self.vdb.data_wrapper.leaf_value, self.sdf.data_wrapper.leaf_value)
         self.rasterize_particles(particle_pos, num_particles, particle_radius)
+        self.sdf.clear()
+        field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
 
         # # Dilate
         # self.vdb.clear()
