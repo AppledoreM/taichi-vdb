@@ -309,7 +309,7 @@ class VdbDataWrapper:
     @ti.func
     def read_value_world(self, level: ti.template(), i, j, k):
         assert level < self.num_vdb_levels, "Level exceeds maximum vdb level {}".format(self.num_vdb_levels)
-        
+
         res = self.background_value
         if ti.static(level + 1 == self.num_vdb_levels):
             res = self.leaf_value[i, j, k]

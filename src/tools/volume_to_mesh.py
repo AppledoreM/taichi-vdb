@@ -628,32 +628,32 @@ class VolumeToMesh:
                     mean_point /= count
                     count = 0
                     # Fill A matrix
-                    for w in range(12):
-                        edge_byte = 1 << w
-                        if VolumeToMesh.edge_table[cube_index] & edge_byte:
-                            interpolate_index0, interpolate_index1 = get_interpolate_indices(w, 0)
-                            vertex0 = cube_voxel_coord + VolumeToMesh.vertex_offset[interpolate_index0]
-                            vertex1 = cube_voxel_coord + VolumeToMesh.vertex_offset[interpolate_index1]
-
-                            intersection = vertex_interpolate(isovalue, sdf.transform.voxel_to_coord_packed(vertex0),
-                                                             sdf.transform.voxel_to_coord_packed(vertex1),
-                                                             sdf.read_value_world(vertex0[0], vertex0[1],
-                                                                                  vertex0[2]),
-                                                             sdf.read_value_world(vertex1[0], vertex1[1],
-                                                                                  vertex1[2]))
-                            normal = compute_normal_at(intersection)
-                            # intersection -= mean_point
-                            A[count, 0] = normal[0]
-                            A[count, 1] = normal[1]
-                            A[count, 2] = normal[2]
-                            A[count, 3] = normal.dot(intersection)
-                            count += 1
-
-                    # # QR decomposition
-                    Q, Ahat = householder_qr_decomposition(A)
-
-                    local_coord = solve_qef(Ahat)
-                    vertex_coord = mean_point + local_coord
+                    # for w in range(12):
+                    #     edge_byte = 1 << w
+                    #     if VolumeToMesh.edge_table[cube_index] & edge_byte:
+                    #         interpolate_index0, interpolate_index1 = get_interpolate_indices(w, 0)
+                    #         vertex0 = cube_voxel_coord + VolumeToMesh.vertex_offset[interpolate_index0]
+                    #         vertex1 = cube_voxel_coord + VolumeToMesh.vertex_offset[interpolate_index1]
+                    #
+                    #         intersection = vertex_interpolate(isovalue, sdf.transform.voxel_to_coord_packed(vertex0),
+                    #                                          sdf.transform.voxel_to_coord_packed(vertex1),
+                    #                                          sdf.read_value_world(vertex0[0], vertex0[1],
+                    #                                                               vertex0[2]),
+                    #                                          sdf.read_value_world(vertex1[0], vertex1[1],
+                    #                                                               vertex1[2]))
+                    #         normal = compute_normal_at(intersection)
+                    #         # intersection -= mean_point
+                    #         A[count, 0] = normal[0]
+                    #         A[count, 1] = normal[1]
+                    #         A[count, 2] = normal[2]
+                    #         A[count, 3] = normal.dot(intersection)
+                    #         count += 1
+                    #
+                    # # # QR decomposition
+                    # Q, Ahat = householder_qr_decomposition(A)
+                    #
+                    # local_coord = solve_qef(Ahat)
+                    vertex_coord = mean_point #+ local_coord
 
                     vertex_voxel_coord = sdf.transform.coord_to_voxel_packed(vertex_coord)
                     if vertex_voxel_coord[0] != i or vertex_voxel_coord[1] != j or vertex_voxel_coord[2] != k:

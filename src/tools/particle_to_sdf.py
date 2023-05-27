@@ -19,6 +19,10 @@ class ParticleToSdf:
         self.max_num_particles = max_num_particles
         self.vdb = VdbGrid(voxel_dim, level_configs, ti.f32)
 
+        # Sampling Mass and density
+        self.mass = ti.field(dtype=ti.f32, shape=max_num_particles)
+        self.density = ti.field(dtype=ti.f32, shape=max_num_particles)
+
         # Anisotropic kernel
         self.G = ti.Matrix.field(3, 3, ti.f32, shape=max_num_particles)
         self.x_bar = ti.Vector.field(3, ti.f32, shape=max_num_particles)
@@ -43,6 +47,7 @@ class ParticleToSdf:
     def compute_anisotropic_kernel_with_grid(self, particle_pos: ti.template(), num_particles: ti.template(),
                                              smoothing_radius: ti.f32):
         smoothing_voxel_radius = ti.ceil(smoothing_radius * self.vdb.data_wrapper.inv_voxel_dim, ti.i32) - 1
+        print(f"Smoothing radius {smoothing_voxel_radius}")
         for i, j, k in self.vdb.data_wrapper.leaf_value:
             id = int(self.vdb.read_value_world(i, j, k))
 
@@ -149,6 +154,37 @@ class ParticleToSdf:
         #         self.sdf.set_value_packed(particle_pos[id], id + 1)
         # print(f"{used_particle_count}")
 
+    @ti.func
+    def isotropic_kernel(self, h, r):
+        res = 0.0
+        if 0 <= r <= h:
+            inv_h = 1 / h
+            res = ti.static(315 / (64 * np.pi)) * ti.pow(h * h - r * r, 3) * ti.pow(inv_h, 9)
+        return res
+
+    @ti.kernel
+    def sampling_kernel(self, particle_pos: ti.template(), particle_radius: ti.f32, smoothing_radius: ti.f32):
+        smoothing_voxel_radius = ti.ceil(smoothing_radius * self.vdb.data_wrapper.inv_voxel_dim, ti.i32) - 1
+        volume = (4 * np.pi / 3) * ti.pow(particle_radius, 3)
+        for i, j, k in self.vdb.data_wrapper.leaf_value:
+            id = int(self.vdb.read_value_world(i, j, k))
+            if id > 0:
+                pos = particle_pos[id - 1]
+
+                for di, dj, dk in ti.ndrange(
+                        (-2 * smoothing_voxel_radius[0], 2 * smoothing_voxel_radius[0] + 1),
+                        (-2 * smoothing_voxel_radius[1], 2 * smoothing_voxel_radius[1] + 1),
+                        (-2 * smoothing_voxel_radius[2], 2 * smoothing_voxel_radius[2] + 1)
+                ):
+                    other_id = int(self.vdb.read_value_world(i + di, j + dj, k + dk))
+                    if other_id > 0:
+                        other_pos = particle_pos[other_id - 1]
+                        dist = (other_pos - pos).norm()
+                        weight = self.isotropic_kernel(2 * smoothing_radius, dist)
+                        self.mass[id - 1] += volume * weight
+                        self.density[id - 1] += weight
+                print(f"Sampled Mass: {self.mass[id - 1]}; Sampled Density: {self.density[id - 1]}")
+
     @ti.kernel
     def mark_surface_vertex(self):
         for i, j, k in self.vdb.data_wrapper.leaf_value:
@@ -160,12 +196,10 @@ class ParticleToSdf:
         q = (G @ dx).norm()
         res = 0.0
         # Wayland C6
-        # if 0 <= q <= 2:
-        #     res = ti.static(1365 / (512 * np.pi)) * ti.pow(1 - q / 2, 8) * (
-        #             4 * ti.pow(q, 3) + 6.25 * q * q + 4 * q + 1) * G.determinant()
-        res = 315 / (64 * np.pi) * G.determinant() * ti.pow(1 - q * q, 3)
-
-        return res
+        if 0 <= q <= 2:
+            res = ti.static(1365 / (512 * np.pi)) * ti.pow(1 - q / 2, 8) * (
+                    4 * ti.pow(q, 3) + 6.25 * q * q + 4 * q + 1) * G.determinant()
+        return -res
 
     @ti.kernel
     def compute_sdf_fixed_volume(self, smoothing_radius: ti.f32, volume: ti.f32):
@@ -185,13 +219,16 @@ class ParticleToSdf:
                 id = int(self.vdb.read_value_world(nx, ny, nz))
 
                 if id > 0:
-                    sdf_value += volume * self.anisotropic_kernel(self.x_bar[id - 1] - vertex_pos, self.G[id - 1])
+                    Gr = self.G[id - 1] @ (vertex_pos - self.x_bar[id - 1])
+                    sdf_value += self.mass[id - 1] * self.G[id - 1].determinant() * self.isotropic_kernel(Gr.norm(), 2 * smoothing_radius) / self.density[id - 1]
+
             self.sdf.set_value_world(i, j, k, sdf_value)
 
     @ti.kernel
     def rasterize_particles(self, particle_pos: ti.template(), num_particles: ti.template(),
                             particle_radius: ti.template()):
-        particle_radius_voxel = 1 + ti.ceil(particle_radius / self.sdf.transform.voxel_dim, ti.i32)
+        particle_scale = 1
+        particle_radius_voxel = 1 + ti.ceil(particle_radius * particle_scale / self.sdf.transform.voxel_dim, ti.i32)
 
         for id in range(num_particles):
             pos = particle_pos[id]
@@ -203,10 +240,10 @@ class ParticleToSdf:
             ):
                 adjacent_voxel_coord = pos_voxel_coord + ti.Vector([i, j, k])
                 center = self.sdf.transform.voxel_to_coord_packed(adjacent_voxel_coord + ti.Vector([0.5, 0.5, 0.5]))
-                value = (center - pos).norm()
-                if value - particle_radius < 0 or self.sdf.read_value_world(adjacent_voxel_coord[0], adjacent_voxel_coord[1], adjacent_voxel_coord[2]) >= 0.0:
+                distance = (center - pos).norm()
+                if distance - particle_radius * particle_scale < 0 or self.sdf.read_value_world(adjacent_voxel_coord[0], adjacent_voxel_coord[1], adjacent_voxel_coord[2]) >= 0.0:
                     self.vdb.max_value_world(adjacent_voxel_coord[0], adjacent_voxel_coord[1], adjacent_voxel_coord[2],
-                                             value - particle_radius)
+                                             distance - particle_radius * particle_scale)
 
 
     @ti.func
@@ -273,6 +310,8 @@ class ParticleToSdf:
 
                 if not is_erode:
                     self.vdb.set_value_world(i, j, k, value)
+                else:
+                    self.vdb.set_value_world(i, j, k, 0.0)
 
 
 
@@ -284,6 +323,7 @@ class ParticleToSdf:
         particle_volume = ti.static(4 * np.pi / 3) * particle_radius * particle_radius * particle_radius
         # Step 1: Fill particle grid
         self.fill_vdb_grid(particle_pos, num_particles, smoothing_radius)
+        self.sampling_kernel(particle_pos, particle_radius, smoothing_radius)
         # field_copy(self.vdb.data_wrapper.leaf_value, self.sdf.data_wrapper.leaf_value)
         # self.vdb.prune(0)
         # self.sdf.clear()
@@ -296,32 +336,38 @@ class ParticleToSdf:
         self.compute_sdf_fixed_volume(smoothing_radius, particle_volume)
         # Step 5: Rasterize particles
 
-        # self.vdb.clear()
-        # field_copy(self.vdb.data_wrapper.leaf_value, self.sdf.data_wrapper.leaf_value)
-        # self.rasterize_particles(particle_pos, num_particles, particle_radius)
-        # self.sdf.clear()
-        # field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
+        self.vdb.clear()
+        field_copy(self.vdb.data_wrapper.leaf_value, self.sdf.data_wrapper.leaf_value)
+        self.rasterize_particles(particle_pos, num_particles, particle_radius)
+        self.sdf.clear()
+        field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
 
         # Dilate
-        # self.vdb.clear()
-        # field_copy(self.vdb.data_wrapper.leaf_value, self.sdf.data_wrapper.leaf_value)
-        # self.dilate_kernel()
-        # self.sdf.clear()
-        # field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
-        
+        self.vdb.clear()
+        field_copy(self.vdb.data_wrapper.leaf_value, self.sdf.data_wrapper.leaf_value)
+        self.dilate_kernel()
+        self.sdf.clear()
+        field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
+
         self.vdb.clear()
         self.gaussian_kernel(1)
         self.sdf.clear()
         field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
-        
+
+        # Further smoothing
+        # self.vdb.clear()
+        # self.gaussian_kernel(2)
+        # self.sdf.clear()
+        # field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
+
         # Erode
-        # self.vdb.clear()
-        # self.erode_kernel()
-        # self.sdf.clear()
-        # field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
-        
-        # self.vdb.clear()
-        # self.erode_kernel()
-        # self.sdf.clear()
-        # field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
+        self.vdb.clear()
+        self.erode_kernel()
+        self.sdf.clear()
+        field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
+
+        self.vdb.clear()
+        self.erode_kernel()
+        self.sdf.clear()
+        field_copy(self.sdf.data_wrapper.leaf_value, self.vdb.data_wrapper.leaf_value)
 

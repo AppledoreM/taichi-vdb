@@ -3,15 +3,15 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/src")
 import taichi as ti
 
-ti.init(arch=ti.cuda, device_memory_GB=4, offline_cache=False, debug=False, kernel_profiler=True)
+ti.init(arch=ti.cpu, device_memory_GB=10, offline_cache=False, debug=False, kernel_profiler=True)
 
 from src.vdb_grid import *
 from src.tools.particle_to_sdf import *
 from src.vdb_viewer import *
 from src.tools.volume_to_mesh import *
 
-particle_radius = 0.01
-voxel_dim = ti.Vector([particle_radius * 1, particle_radius * 1, particle_radius * 1])
+particle_radius = 0.008
+voxel_dim = ti.Vector([particle_radius * 2, particle_radius * 2, particle_radius * 2])
 
 max_num_particles = 10000000
 point_cloud = ti.Vector.field(3, ti.f32, max_num_particles)
@@ -25,7 +25,7 @@ def make_shape(point_cloud : ti.template(), shape_id: ti.template()) -> ti.i32:
         base_coord = ti.Vector([1., 1, 1])
         center = ti.Vector([2, 2, 2])
         for i, j, k in ti.ndrange(200, 200, 200):
-            pos = base_coord + ti.Vector([i, j, k]) * particle_radius * 2
+            pos = base_coord + ti.Vector([i + 0.5, j + 0.5, k + 0.5]) * particle_radius * 2
             if (pos - center).norm() < 1:
                 index = ti.atomic_add(counter, 1)
                 point_cloud[index] = pos
@@ -71,7 +71,8 @@ def mark_sdf(sdf:ti.template()) -> ti.i32:
 def print_sdf(sdf: ti.template()):
     for i, j, k in sdf:
         value = sdf[i, j, k]
-        print(value)
+        if value < 0:
+            print(value)
 
 
 sdf_tool = ParticleToSdf(voxel_dim, vdb_default_levels, max_num_particles)
@@ -90,7 +91,7 @@ def read_particles():
             if pos_vec[0] >= 0.0 and pos_vec[1] >= 0.0 and pos_vec[2] >= 0.0:
                 point_cloud[import_particle_count] = pos_vec
                 import_particle_count += 1
-                if import_particle_count % 10000 == 0:
+                if import_particle_count % 100000 == 0:
                     print(f"Read {import_particle_count} particles")
     print("Finished Reading")
     return import_particle_count
@@ -113,7 +114,7 @@ if __name__ == "__main__":
         sdf_tool.vdb.clear()
         sdf_tool.sdf.clear()
         print(f"{num_particles} of particles in total.")
-        sdf_tool.particle_to_sdf_anisotropic(point_cloud, num_particles, particle_radius, smoothing_radius=0.03)
+        sdf_tool.particle_to_sdf_anisotropic(point_cloud, num_particles, particle_radius, smoothing_radius=0.048)
         # fill_sphere_sdf(sdf_tool.sdf.data_wrapper.leaf_value)
         num_indices[None] = 0
         num_vertices[None] = 0
@@ -134,8 +135,10 @@ if __name__ == "__main__":
         writer.add_faces(arr_indices)
         writer.export("mesh.ply")
 
+    # print_sdf(sdf_tool.sdf.data_wrapper.leaf_value)
+    num_mark = mark_sdf(sdf_tool.sdf.data_wrapper.leaf_value)
     if show_mesh:
-        window = ti.ui.Window("Vdb Viewer", (2560, 1440))
+        window = ti.ui.Window("Mesh Viewer", (2560, 1440))
         canvas = window.get_canvas()
         scene = ti.ui.Scene()
         camera = ti.ui.Camera()
@@ -149,7 +152,9 @@ if __name__ == "__main__":
             scene.point_light(pos=(1.5, 1.5, 1.5), color=(1, 1, 1))
             scene.point_light(pos=(3.5, 3, 3.5), color=(0.2, 0.2, 0.2))
             scene.point_light(pos=(0.5, 3, 0.5), color=(0.2, 0.2, 0.2))
-            scene.mesh(vertices=vertices, indices=indices, vertex_count=num_vertices[None], index_count=num_indices[None])
+            # scene.particles(centers=point_cloud, index_count=num_mark, radius=particle_radius)
+            # scene.particles(centers=point_cloud, index_count=num_particles, radius=particle_radius)
+            # scene.mesh(vertices=vertices, indices=indices, vertex_count=num_vertices[None], index_count=num_indices[None])
             canvas.scene(scene)
             window.show()
 
