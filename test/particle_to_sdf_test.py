@@ -3,7 +3,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/src")
 import taichi as ti
 
-ti.init(arch=ti.cpu, device_memory_GB=10, offline_cache=False, debug=False, kernel_profiler=True)
+ti.init(arch=ti.cpu, device_memory_GB=13, offline_cache=False, debug=False, kernel_profiler=True)
 
 from src.vdb_grid import *
 from src.tools.particle_to_sdf import *
@@ -11,7 +11,8 @@ from src.vdb_viewer import *
 from src.tools.volume_to_mesh import *
 
 particle_radius = 0.008
-voxel_dim = ti.Vector([particle_radius * 2, particle_radius * 2, particle_radius * 2])
+voxel_dim = ti.Vector([particle_radius, particle_radius, particle_radius]) * 2
+sdf_voxel_dim = voxel_dim * 1
 
 max_num_particles = 10000000
 point_cloud = ti.Vector.field(3, ti.f32, max_num_particles)
@@ -22,8 +23,8 @@ shape_sphere = 1
 def make_shape(point_cloud : ti.template(), shape_id: ti.template()) -> ti.i32:
     counter = 0
     if ti.static(shape_id == shape_sphere):
-        base_coord = ti.Vector([1., 1, 1])
-        center = ti.Vector([2, 2, 2])
+        base_coord = ti.Vector([2, 2, 2])
+        center = ti.Vector([3, 3, 3])
         for i, j, k in ti.ndrange(200, 200, 200):
             pos = base_coord + ti.Vector([i + 0.5, j + 0.5, k + 0.5]) * particle_radius * 2
             if (pos - center).norm() < 1:
@@ -45,9 +46,9 @@ vdb_grid = VdbGrid(voxel_dim, vdb_default_levels)
 num_vertices = ti.field(dtype=ti.i32, shape=())
 num_indices = ti.field(dtype=ti.i32, shape=())
 
-vertices = ti.Vector.field(n=3, dtype=ti.f32, shape=4000000)
+vertices = ti.Vector.field(n=3, dtype=ti.f32, shape=20000000)
 normal_buffer = ti.Vector.field(n=4, dtype=ti.f32, shape=3000000)
-indices = ti.field(dtype=ti.i32, shape=20000000)
+indices = ti.field(dtype=ti.i32, shape=400000000)
 
 
 use_dual_contouring = True
@@ -75,7 +76,7 @@ def print_sdf(sdf: ti.template()):
             print(value)
 
 
-sdf_tool = ParticleToSdf(voxel_dim, vdb_default_levels, max_num_particles)
+sdf_tool = ParticleToSdf(sdf_voxel_dim, voxel_dim, vdb_default_levels, max_num_particles)
 @ti.kernel
 def test_kernel():
     print(sdf_tool.vdb.transform.coord_to_voxel_packed(ti.Vector([0.5, 1.2, 1.04])))
@@ -83,7 +84,7 @@ def test_kernel():
 
 def read_particles():
     import_particle_count = 0
-    with open("/Users/appledorem/serialized_frame_500.txt") as f:
+    with open("/home/appledorem/serialized_frame_500.txt") as f:
         for line in f.readlines():
             line = line[:-1]
             pos = line.split(",")
@@ -108,19 +109,18 @@ def fill_sphere_sdf(sdf: ti.template()):
 
 if __name__ == "__main__":
 
-    num_particles = make_shape(point_cloud, shape_sphere)
-    # num_particles = read_particles()
+    # num_particles = make_shape(point_cloud, shape_sphere)
+    num_particles = read_particles()
     for i in range(profile_epoch):
-        sdf_tool.vdb.clear()
-        sdf_tool.sdf.clear()
+        sdf_tool.clear()
         print(f"{num_particles} of particles in total.")
-        sdf_tool.particle_to_sdf_anisotropic(point_cloud, num_particles, particle_radius, smoothing_radius=0.048)
+        sdf_tool.particle_to_sdf_anisotropic(point_cloud, num_particles, particle_radius, smoothing_radius=4 * voxel_dim[0])
         # fill_sphere_sdf(sdf_tool.sdf.data_wrapper.leaf_value)
         num_indices[None] = 0
         num_vertices[None] = 0
         vdb_grid.clear()
         if use_dual_contouring:
-            VolumeToMesh.dual_contouring(sdf_tool.sdf, vdb_grid, 0.0, num_vertices, vertices, num_indices, indices)
+            VolumeToMesh.dual_contouring(sdf_tool.sdf, vdb_grid, -0.1, num_vertices, vertices, num_indices, indices)
         else:
             VolumeToMesh.marching_cube(sdf_tool.sdf, vdb_grid, 0.0, num_vertices, vertices, num_indices, indices, normal_buffer)
         print(f"Generated {num_vertices[None]} vertices and {num_indices[None]} indices")

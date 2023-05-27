@@ -1,4 +1,6 @@
 import taichi as ti
+import numpy as np
+
 
 ## @param x, y denotes the parameter to compare
 #  @param tolerance denotes the tolerance of comparison
@@ -24,6 +26,7 @@ def householder_vector_decomposition(x: ti.template()):
     u = ti.Vector.one(dt=ti.f32, n=ti.static(u2.n + 1))
     return rho, u, tau
 
+
 @ti.func
 def householder_qr_decomposition(M: ti.template()):
     Q = ti.Matrix.identity(ti.f32, M.n)
@@ -44,6 +47,7 @@ def householder_qr_decomposition(M: ti.template()):
 
     return Q, R
 
+
 @ti.func
 def solve_qef(A: ti.template()):
     # SVD decomposition
@@ -57,4 +61,24 @@ def solve_qef(A: ti.template()):
     # Return result
     res = pseudoInv @ b
     return res
+
+# --------------------------------------Sampling Kernels--------------------------------------
+@ti.func
+def wendland_c6_kernel(h: ti.f32, r: ti.f32):
+    q = r / h
+    res = 0.0
+    if 0 <= q <= 2:
+        res = ti.static(1365 / (512 * np.pi)) * ti.pow(1 - q / 2, 8) * (4 * ti.pow(q, 3) + 6.25 * q * q + 4 * q + 1) / ti.pow(h, 3)
+    return res
+
+
+@ti.func
+def cubic_spline_kernel_3d(h: ti.f32, r: ti.f32):
+    q = r / h
+    res = 0.0
+    if 0 <= q <= 1 / 2:
+        res = 1 - 6 * q * q + 6 * q * q * q
+    elif 1/2 < q:
+        res = 2 * (1 - q) * (1 - q) * (1 - q)
+    return ti.static(8 / np.pi) * res
 
