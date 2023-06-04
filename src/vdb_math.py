@@ -73,7 +73,7 @@ def wendland_c6_kernel(h: ti.f32, r: ti.f32):
 
 
 @ti.func
-def cubic_spline_kernel_3d(h: ti.f32, r: ti.f32):
+def cubic_spline_kernel_3d(h: ti.f32, r: ti.f32, is_):
     q = r / h
     res = 0.0
     if 0 <= q <= 1 / 2:
@@ -81,4 +81,12 @@ def cubic_spline_kernel_3d(h: ti.f32, r: ti.f32):
     elif 1/2 < q:
         res = 2 * (1 - q) * (1 - q) * (1 - q)
     return ti.static(8 / np.pi) * res
+
+@ti.func
+def poly6_kernel_3d(h: ti.template(), r: ti.template()):
+    res = 0.0
+    if 0 <= r <= h:
+        res = ti.static(315 / (64 * np.pi)) * ti.pow(h * h - r * r, 3) / ti.pow(h, 9)
+    return res
+
 
