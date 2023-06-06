@@ -230,11 +230,6 @@ class ParticleToSdf:
                                              distance - particle_radius * particle_scale)
 
 
-    @ti.func
-    def gaussian_filter(self, x: ti.template(), y: ti.template(), z: ti.template()):
-        x2y2z2 = ti.static(x * x + y * y + z * z)
-        coeff = ti.static(1 / ti.pow(ti.sqrt(2 * np.pi), 3))
-        return ti.static(coeff * ti.exp(-x2y2z2 / 2))
 
     @ti.kernel
     def gaussian_kernel(self, kernel_width: ti.template()):

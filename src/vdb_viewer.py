@@ -51,14 +51,7 @@ class VdbViewer:
             self.clear_frame_data()
             vdb.data_wrapper.generate_vdb_bbox_vertices_impl(self.vertices, self.indices, self.vertex_color)
 
-        self.camera.track_user_inputs(self.window, movement_speed=0.03, hold_key=ti.ui.LMB)
-        self.scene.set_camera(self.camera)
-        self.scene.ambient_light((0.8, 0.8, 0.8))
-        self.scene.point_light(pos=(0.5, 1.5, 1.5), color=(1, 1, 1))
         self.scene.lines(vertices=self.vertices,indices=self.indices, width=1.0, per_vertex_color=self.vertex_color)
-
-        self.canvas.scene(self.scene)
-        self.window.show()
 
 
 

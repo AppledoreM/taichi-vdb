@@ -301,7 +301,7 @@ class VdbDataWrapper:
             elif ti.static(level == 4 and self.num_vdb_levels > 4):
                 res = self.value4[i, j, k]
 
-        return res
+        return ti.cast(res, self.dtype)
 
     ## @param level The compile-time level to read value from  
     #  @param i, j, k The world voxel coordinates to read value from
@@ -317,7 +317,7 @@ class VdbDataWrapper:
             i, j, k = self.rescale_index_from_world_voxel(level, i, j, k)
             res = self.read_value_local(level, i, j, k)
 
-        return res
+        return ti.cast(res, self.dtype)
     
 
 
@@ -678,14 +678,14 @@ class VdbGrid:
             else:
                 res = self.read_value_impl(level + 1, i, j, k)
 
-        return res
+        return ti.cast(res, self.data_wrapper.dtype)
 
     @ti.func
     def read_value_world(self, i, j, k):
         res = self.data_wrapper.background_value
         if i >= 0 and j >= 0 and k >= 0:
             res = self.read_value_impl(self.leaf_level, i, j, k)
-        return res
+        return ti.cast(res, self.data_wrapper.dtype)
 
     @ti.func
     def set_value_packed(self, xyz: ti.template(), value):
@@ -702,7 +702,7 @@ class VdbGrid:
         if self.transform.is_contain_packed(xyz):
             i, j, k = self.transform.coord_to_voxel_packed(xyz)
             res = self.read_value_world(i, j, k)
-        return res
+        return ti.cast(res, self.data_wrapper.dtype)
 
     @ti.func
     def read_value(self, x, y, z):
