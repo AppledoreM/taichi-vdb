@@ -641,31 +641,38 @@ class VdbGrid:
 
     @ti.func
     def set_value_world(self, i, j, k, value):
-        self.modify_value_world(i, j, k, value, VdbOpId.set_op)
+        if i >= 0 and j >= 0 and k >= 0:
+            self.modify_value_world(i, j, k, value, VdbOpId.set_op)
 
     @ti.func
     def add_value_world(self, i, j, k, value):
-        self.modify_value_world(i, j, k, value, VdbOpId.add_op)
+        if i >= 0 and j >= 0 and k >= 0:
+            self.modify_value_world(i, j, k, value, VdbOpId.add_op)
 
     @ti.func
     def sub_value_world(self, i, j, k, value):
-        self.modify_value_world(i, j, k, value, VdbOpId.sub_op)
+        if i >= 0 and j >= 0 and k >= 0:
+            self.modify_value_world(i, j, k, value, VdbOpId.sub_op)
 
     @ti.func
     def mul_value_world(self, i, j, k, value):
-        self.modify_value_world(i, j, k, value, VdbOpId.mul_op)
+        if i >= 0 and j >= 0 and k >= 0:
+            self.modify_value_world(i, j, k, value, VdbOpId.mul_op)
 
     @ti.func
     def div_value_world(self, i, j, k, value):
-        self.modify_value_world(i, j, k, value, VdbOpId.div_op)
+        if i >= 0 and j >= 0 and k >= 0:
+            self.modify_value_world(i, j, k, value, VdbOpId.div_op)
 
     @ti.func
     def min_value_world(self, i, j, k, value):
-        self.modify_value_world(i, j, k, value, VdbOpId.min_op)
+        if i >= 0 and j >= 0 and k >= 0:
+            self.modify_value_world(i, j, k, value, VdbOpId.min_op)
 
     @ti.func
     def max_value_world(self, i, j, k, value):
-        self.modify_value_world(i, j, k, value, VdbOpId.max_op)
+        if i >= 0 and j >= 0 and k >= 0:
+            self.modify_value_world(i, j, k, value, VdbOpId.max_op)
 
     @ti.func
     def read_value_impl(self, level: ti.template(), i, j, k):
